@@ -1,3 +1,3 @@
 import { z } from "zod";
 
-export const signUpBodyValidator = z.object({});
+export const webHookValidationSchema = z.object({});

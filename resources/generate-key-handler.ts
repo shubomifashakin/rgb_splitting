@@ -6,7 +6,7 @@ import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
 
 import { v4 as uuid } from "uuid";
 
-import { signUpBodyValidator } from "../helpers/schemaValidator/validators";
+import { webHookValidationSchema } from "../helpers/schemaValidator/validators";
 
 const region = process.env.REGION;
 const tableName = process.env.TABLE_NAME;
@@ -21,25 +21,27 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
   //the body
   const body = event.body;
 
-  //validdate  the body
-  //TODO: The event should contain the username of the user that paid, also the signature & other relevant data
-  const { data, success, error } = signUpBodyValidator.safeParse(body);
+  console.log(body);
 
-  if (!success) {
-    return { statusCode: 400, body: JSON.stringify(error.message) };
-  }
+  // //validdate  the body
+  // //TODO: The event should contain the username of the user that paid, also the signature & other relevant data
+  // const { data, success, error } = signUpBodyValidator.safeParse(body);
 
-  if (typeof usagePlanId !== "string") {
-    return { statusCode: 500, body: JSON.stringify("internal server error") };
-  }
+  // if (!success) {
+  //   return { statusCode: 400, body: JSON.stringify(error.message) };
+  // }
 
-  //TODO: validate the webhook signature or origin
-  if (false === false) {
-    return {
-      statusCode: 401,
-      body: JSON.stringify({ message: "Invalid signature" }),
-    };
-  }
+  // if (typeof usagePlanId !== "string") {
+  //   return { statusCode: 500, body: JSON.stringify("internal server error") };
+  // }
+
+  // //TODO: validate the webhook signature or origin
+  // if (false === false) {
+  //   return {
+  //     statusCode: 401,
+  //     body: JSON.stringify({ message: "Invalid signature" }),
+  //   };
+  // }
 
   ///use a uuid to generate a unique api key
   const newUserApiKey = uuid();
@@ -48,7 +50,11 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
 
   //generate an api using the uuid generated
   const apiKey = await apiGateway
-    .createApiKey({ value: newUserApiKey })
+    .createApiKey({
+      value: newUserApiKey,
+      name: "rgb_splitting_key", //TODO: Include the users usename in this
+      enabled: true,
+    })
     .promise();
 
   if (!apiKey.id || !apiKey.value) {
@@ -60,27 +66,14 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     };
   }
 
-  //add the api key to the usage plan
-  const usagePlanKeyParams: APIGateway.CreateUsagePlanKeyRequest = {
-    usagePlanId: usagePlanId,
-    keyId: apiKey.id,
-    keyType: "API_KEY",
-  };
-
-  const usagePlan = await apiGateway
-    .createUsagePlanKey(usagePlanKeyParams)
+  //add the apikey generated to the usage plan
+  const usagePlans = await apiGateway
+    .createUsagePlanKey({
+      usagePlanId: usagePlanId as string,
+      keyId: apiKey.id,
+      keyType: "API_KEY",
+    })
     .promise();
-
-  if (!usagePlan.id || !usagePlan.value) {
-    return {
-      statusCode: 500,
-      body: JSON.stringify({
-        message: "Internal server error - failed to add apikey to usage plan",
-      }),
-    };
-  }
-
-  //add the users apikey to the table
 
   //TODO: HASH THE USERS API KEY BEFORE STORING, USING A HASHING ALGORITHM
   await dynamo.send(
@@ -95,6 +88,6 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
 
   return {
     statusCode: 200,
-    body: JSON.stringify({ message: "Api key generated" }),
+    body: JSON.stringify({ message: "Api key generated", key: apiKey.value }),
   };
 };
