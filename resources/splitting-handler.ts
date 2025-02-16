@@ -8,7 +8,9 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
   };
 
   //get the api key from the headers
-  //get the users username from the headers
+  // const apiKey = event.headers["x-api-key"];
+
+  //get the users username from the headers or cookies
 
   //receive the image
 

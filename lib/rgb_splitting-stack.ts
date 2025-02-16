@@ -7,9 +7,12 @@ import { NodejsFunction } from "aws-cdk-lib/aws-lambda-nodejs";
 import { CorsHttpMethod } from "aws-cdk-lib/aws-apigatewayv2";
 import {
   ApiKeySourceType,
+  AuthorizationType,
+  Authorizer,
   Cors,
   LambdaIntegration,
   RestApi,
+  TokenAuthorizer,
 } from "aws-cdk-lib/aws-apigateway";
 import { HttpMethod } from "aws-cdk-lib/aws-events";
 import { PolicyStatement } from "aws-cdk-lib/aws-iam";
@@ -26,6 +29,7 @@ dotenv.config();
 
 const region = process.env.REGION;
 const usagePlanId = process.env.USAGE_PLAN_ID;
+const clerkJwtKey = process.env.CLERK_JWT_KEY;
 
 export class RgbSplittingStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -44,6 +48,10 @@ export class RgbSplittingStack extends cdk.Stack {
       throw new Error("Region does not exist in environment");
     }
 
+    if (typeof clerkJwtKey !== "string") {
+      throw new Error("Clerk Jwt does not exist in environment");
+    }
+
     //bucket to store the processed images
     const s3Bucket = new Bucket(this, "rgb-splitting-bucket-sh", {
       versioned: true,
@@ -58,7 +66,7 @@ export class RgbSplittingStack extends cdk.Stack {
       tableName: "rgb-splitting-table-sh",
       partitionKey: {
         type: AttributeType.STRING,
-        name: "username",
+        name: "userId",
       },
       sortKey: {
         name: "apiKey",
@@ -107,6 +115,41 @@ export class RgbSplittingStack extends cdk.Stack {
       }
     );
 
+    //used to get all the api keys owned by a particular user
+    const getUsersApiKeysLambda = new NodejsFunction(
+      this,
+      "rgb-splitting-get-all-user-api-keys-lambda",
+      {
+        functionName: "rgb-splitting-get-all-user-api-keys-lambda",
+        description:
+          "This lambda is used for getting all the api keys for a particula user",
+        runtime: Runtime.NODEJS_LATEST,
+        entry: "./resources/get-all-user-api-keys-handler.ts",
+        handler: "handler",
+        environment: {
+          REGION: region,
+          TABLE_NAME: usersTable.tableName,
+        },
+      }
+    );
+
+    //the  lambda that handles authorizations
+    const getAllUserApiKeysAuthorizerLambda = new NodejsFunction(
+      this,
+      "rgbAllApiKeysAuthorizer",
+      {
+        functionName: "rgb-splitting-get-all-user-api-keys-authorizer-lambda",
+        description:
+          "This lambda acts as an authorizer for the getAllUserApiKeysRoute",
+        runtime: Runtime.NODEJS_LATEST,
+        entry: "./resources/get-all-user-api-keys-auth-lambda.ts",
+        handler: "handler",
+        environment: {
+          CLERK_JWT: clerkJwtKey,
+        },
+      }
+    );
+
     //create the rest api
     const restApi = new RestApi(this, "rgb-splitting-rest-api-sh", {
       restApiName: "rgb-splitting-rest-api-sh",
@@ -117,14 +160,26 @@ export class RgbSplittingStack extends cdk.Stack {
       },
       apiKeySourceType: ApiKeySourceType.HEADER, //the api key should be included in their headers
       binaryMediaTypes: ["image/png", "image/jpeg"],
-      cloudWatchRoleRemovalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
+    // the lambda authorizer
+    const lambdaAuthorizer = new TokenAuthorizer(this, "rgbRestApiAuthorizer", {
+      handler: getAllUserApiKeysAuthorizerLambda,
+      authorizerName: "rgb-rest-api-token-authorizer",
+      identitySource: "method.request.header.Authorization",
+    });
+
+    const v1Root = restApi.root.addResource("v1");
+
     //this is the route integrated with our lambda
-    const processRoute = restApi.root.addResource("process");
+    const processRoute = v1Root.addResource("process");
 
     //route to generate the api key
-    const generateApiKeyRoute = restApi.root.addResource("generate-api-key");
+    const generateApiKeyRoute = v1Root.addResource("generate-api-key");
+
+    //route to fetch all the api keys a user has
+    const allApiKeys = v1Root.addResource("keys");
+    const getUsersApiKeysRoute = allApiKeys.addResource("{userId}");
 
     // integrate the process route with the splitting lambda
     const processRouteIntegration = new LambdaIntegration(splittingLambda);
@@ -132,6 +187,10 @@ export class RgbSplittingStack extends cdk.Stack {
     // integrate generate api key route with the generate lambda
     const generateApiKeyIntegration = new LambdaIntegration(
       generateApiKeyLambda
+    );
+
+    const getAllUsersApiKeysIntegration = new LambdaIntegration(
+      getUsersApiKeysLambda
     );
 
     //when the rest api is created, this custome resource would run,
@@ -170,6 +229,15 @@ export class RgbSplittingStack extends cdk.Stack {
 
     generateApiKeyRoute.addMethod(HttpMethod.POST, generateApiKeyIntegration);
 
+    getUsersApiKeysRoute.addMethod(
+      HttpMethod.GET,
+      getAllUsersApiKeysIntegration,
+      {
+        authorizer: lambdaAuthorizer,
+        authorizationType: AuthorizationType.CUSTOM,
+      }
+    );
+
     generateApiKeyLambda.addToRolePolicy(
       new PolicyStatement({
         actions: [
@@ -198,5 +266,8 @@ export class RgbSplittingStack extends cdk.Stack {
 
     //allow the sign up lambda write to the database
     usersTable.grantWriteData(generateApiKeyLambda);
+
+    //allow the getUserApiKeys lambda to read from our database
+    usersTable.grantReadData(getUsersApiKeysLambda);
   }
 }

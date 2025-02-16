@@ -16,15 +16,15 @@ const client = new DynamoDBClient({ region });
 
 const dynamo = DynamoDBDocumentClient.from(client);
 
-//this would be a web hook url, only called by the payment gateway
+//this acts as a  webhook url, only called by the payment gateway
 export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
   //the body
   const body = event.body;
 
   console.log(body);
 
-  // //validdate  the body
-  // //TODO: The event should contain the username of the user that paid, also the signature & other relevant data
+  //validdate  the body
+  //TODO: The event should contain the userId of the user that paid, also the signature & other relevant data
   // const { data, success, error } = signUpBodyValidator.safeParse(body);
 
   // if (!success) {
@@ -52,7 +52,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
   const apiKey = await apiGateway
     .createApiKey({
       value: newUserApiKey,
-      name: "rgb_splitting_key", //TODO: Include the users usename in this
+      name: "rgb_splitting_key", //TODO: Include the users userId in this
       enabled: true,
     })
     .promise();
@@ -75,13 +75,15 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     })
     .promise();
 
-  //TODO: HASH THE USERS API KEY BEFORE STORING, USING A HASHING ALGORITHM
   await dynamo.send(
     new PutCommand({
       TableName: tableName,
       Item: {
-        username: "user1234", //TODO: THE USERS USERNAME
-        apiKey: apiKey.value, //TODO: THE HASHED API KEY
+        userId: "user1234", //TODO: THE USERS ID GOTTEN FROM THE WEBHOOK
+        apiKey: apiKey.value,
+        createdAt: new Date().toISOString(),
+        id: uuid(),
+        projectName: "project1", //TODO: THE NAME OF THE PROJECT GOTTEN FROM THE WEBHOOK
       },
     })
   );
