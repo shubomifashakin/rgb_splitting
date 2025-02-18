@@ -1,7 +1,7 @@
 import { Construct } from "constructs";
 
 import * as cdk from "aws-cdk-lib";
-import { Runtime } from "aws-cdk-lib/aws-lambda";
+import { LayerVersion, Runtime } from "aws-cdk-lib/aws-lambda";
 import { BlockPublicAccess, Bucket } from "aws-cdk-lib/aws-s3";
 import { NodejsFunction } from "aws-cdk-lib/aws-lambda-nodejs";
 import { CorsHttpMethod } from "aws-cdk-lib/aws-apigatewayv2";
@@ -78,14 +78,21 @@ export class RgbSplittingStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
+    //this canvas layer is needed to actually build the lamba, because canvas is not supported by default
+    const canvasLayer = LayerVersion.fromLayerVersionArn(
+      this,
+      "lambda-layer-canvas-nodejs",
+      "arn:aws:lambda:us-east-1:432599188850:layer:canvas-nodejs:1"
+    );
+
     // handles the splitting of the uploaded image
     const splittingLambda = new NodejsFunction(
       this,
       "rgb-splitting-lambda-sh",
       {
         functionName: "rgb-splitting-lambda-sh",
-        timeout: cdk.Duration.minutes(3),
-        runtime: Runtime.NODEJS_LATEST,
+        timeout: cdk.Duration.minutes(1.5),
+        runtime: Runtime.NODEJS_20_X,
         environment: {
           REGION: region,
           BUCKET_NAME: s3Bucket.bucketName,
@@ -93,6 +100,16 @@ export class RgbSplittingStack extends cdk.Stack {
         },
         entry: "./resources/splitting-handler.ts",
         handler: "handler",
+        memorySize: 1536,
+        layers: [canvasLayer],
+        bundling: {
+          loader: {
+            ".node": "file", // tells esbuild ti treat the .node files as external files rather than trying to bundle it
+          },
+          sourceMap: true,
+          minify: true,
+          externalModules: ["canvas"], //since we included the canvas layer in our lambda, exclude the canvas module from bundling
+        },
       }
     );
 
@@ -104,7 +121,7 @@ export class RgbSplittingStack extends cdk.Stack {
         functionName: "rgb-splitting-generate-key-lambda",
         description:
           "This lambda is used to generate an api key & add the generated api key to the usage plan passed",
-        runtime: Runtime.NODEJS_LATEST,
+        runtime: Runtime.NODEJS_22_X,
         entry: "./resources/generate-key-handler.ts",
         handler: "handler",
         environment: {
@@ -112,6 +129,7 @@ export class RgbSplittingStack extends cdk.Stack {
           TABLE_NAME: usersTable.tableName,
           USAGE_PLAN_ID: usagePlanId,
         },
+        timeout: cdk.Duration.seconds(20),
       }
     );
 
@@ -123,13 +141,14 @@ export class RgbSplittingStack extends cdk.Stack {
         functionName: "rgb-splitting-get-all-user-api-keys-lambda",
         description:
           "This lambda is used for getting all the api keys for a particula user",
-        runtime: Runtime.NODEJS_LATEST,
+        runtime: Runtime.NODEJS_22_X,
         entry: "./resources/get-all-user-api-keys-handler.ts",
         handler: "handler",
         environment: {
           REGION: region,
           TABLE_NAME: usersTable.tableName,
         },
+        timeout: cdk.Duration.seconds(30),
       }
     );
 
@@ -141,12 +160,13 @@ export class RgbSplittingStack extends cdk.Stack {
         functionName: "rgb-splitting-get-all-user-api-keys-authorizer-lambda",
         description:
           "This lambda acts as an authorizer for the getAllUserApiKeysRoute",
-        runtime: Runtime.NODEJS_LATEST,
+        runtime: Runtime.NODEJS_22_X,
         entry: "./resources/get-all-user-api-keys-auth-lambda.ts",
         handler: "handler",
         environment: {
           CLERK_JWT: clerkJwtKey,
         },
+        timeout: cdk.Duration.seconds(20),
       }
     );
 
@@ -159,7 +179,7 @@ export class RgbSplittingStack extends cdk.Stack {
         allowMethods: [CorsHttpMethod.POST],
       },
       apiKeySourceType: ApiKeySourceType.HEADER, //the api key should be included in their headers
-      binaryMediaTypes: ["image/png", "image/jpeg"],
+      binaryMediaTypes: ["image/png", "image/jpeg", "multipart/form-data"],
     });
 
     // the lambda authorizer
@@ -238,24 +258,18 @@ export class RgbSplittingStack extends cdk.Stack {
       }
     );
 
+    //grant the generate apiKey Lambda permission to create new ApiKeys & fetch all our available keys
     generateApiKeyLambda.addToRolePolicy(
       new PolicyStatement({
         actions: [
-          "apigateway:POST", // Allow creating API keys
+          "apigateway:POST", // Allow creating new API keys
+          "apigateway:PATCH", // Allow updating usage plan
         ],
         resources: [
-          "arn:aws:apigateway:us-east-1::/apikeys", //allow the lambda generate api keys in us-east-1 obly
-          `arn:aws:apigateway:us-east-1::/usageplans/${usagePlanId}/keys`, //allow the lambda get all the keys in this particular usage plan
+          `arn:aws:apigateway:${region}::/apikeys`,
+          `arn:aws:apigateway:${region}::/usageplans/${usagePlanId}`, //the usage plan we are allowing the lambda update
+          `arn:aws:apigateway:${region}::/usageplans/${usagePlanId}/keys`, // allow the lambda permission to list the apikeys in the usage plan
         ],
-      })
-    );
-
-    //allow the generate key lambda to update our usage plan
-    //this allows the lambda function to add the api key generated to our usage plan
-    generateApiKeyLambda.addToRolePolicy(
-      new PolicyStatement({
-        actions: ["apigateway:PATCH"],
-        resources: [`arn:aws:apigateway:us-east-1::/usageplans/${usagePlanId}`],
       })
     );
 
