@@ -2,47 +2,46 @@ import { Construct } from "constructs";
 
 import * as cdk from "aws-cdk-lib";
 import { LayerVersion, Runtime } from "aws-cdk-lib/aws-lambda";
-import { BlockPublicAccess, Bucket } from "aws-cdk-lib/aws-s3";
+import { BlockPublicAccess, Bucket, EventType } from "aws-cdk-lib/aws-s3";
 import { NodejsFunction } from "aws-cdk-lib/aws-lambda-nodejs";
 import { CorsHttpMethod } from "aws-cdk-lib/aws-apigatewayv2";
 import {
   ApiKeySourceType,
   AuthorizationType,
-  Authorizer,
   Cors,
   LambdaIntegration,
+  Period,
   RestApi,
   TokenAuthorizer,
+  UsagePlan,
 } from "aws-cdk-lib/aws-apigateway";
 import { HttpMethod } from "aws-cdk-lib/aws-events";
 import { PolicyStatement } from "aws-cdk-lib/aws-iam";
+import { S3Bucket } from "aws-cdk-lib/aws-kinesisfirehose";
 import { AttributeType, Table } from "aws-cdk-lib/aws-dynamodb";
-import {
-  AwsCustomResource,
-  AwsCustomResourcePolicy,
-  PhysicalResourceId,
-} from "aws-cdk-lib/custom-resources";
+import { LambdaDestination } from "aws-cdk-lib/aws-s3-notifications";
 
 import * as dotenv from "dotenv";
+import { RgbApiStack } from "./RgbApiStack";
+import { Secret } from "aws-cdk-lib/aws-secretsmanager";
 
 dotenv.config();
 
 const region = process.env.REGION;
-const usagePlanId = process.env.USAGE_PLAN_ID;
 const clerkJwtKey = process.env.CLERK_JWT_KEY;
 
+interface RgbSplittingStackProps extends cdk.StackProps {
+  RGBApiStack: RgbApiStack;
+}
+
 export class RgbSplittingStack extends cdk.Stack {
-  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+  constructor(scope: Construct, id: string, props: RgbSplittingStackProps) {
     super(scope, id, {
       ...props,
       env: {
         region,
       },
     });
-
-    if (typeof usagePlanId !== "string") {
-      throw new Error("Usage plan id does not exist in environment");
-    }
 
     if (typeof region !== "string") {
       throw new Error("Region does not exist in environment");
@@ -52,7 +51,12 @@ export class RgbSplittingStack extends cdk.Stack {
       throw new Error("Clerk Jwt does not exist in environment");
     }
 
-    //bucket to store the processed images
+    const rgbRestApiId = props.RGBApiStack.RgbRestApiId;
+    const rgbRestApiRootResourceId = props.RGBApiStack.RgbRestApiRootResourceId;
+    const freeTierUsagePlanId = props.RGBApiStack.freeTierUsagePlanId;
+    const proTierUsagePlanId = props.RGBApiStack.proTierUsagePlanId;
+    const executiveTierUsagePlanId = props.RGBApiStack.executiveTierUsagePlanId;
+
     const s3Bucket = new Bucket(this, "rgb-splitting-bucket-sh", {
       versioned: true,
       publicReadAccess: true,
@@ -61,12 +65,11 @@ export class RgbSplittingStack extends cdk.Stack {
       blockPublicAccess: BlockPublicAccess.BLOCK_ACLS,
     });
 
-    //dynamo db to store the apikey and the images that have been processed using that api key
     const usersTable = new Table(this, "rgb-splitting-table-sh", {
       tableName: "rgb-splitting-table-sh",
       partitionKey: {
-        type: AttributeType.STRING,
         name: "userId",
+        type: AttributeType.STRING,
       },
       sortKey: {
         name: "apiKey",
@@ -78,19 +81,31 @@ export class RgbSplittingStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
-    //this canvas layer is needed to actually build the lamba, because canvas is not supported by default
+    usersTable.addGlobalSecondaryIndex({
+      indexName: "createdAtIndex",
+      partitionKey: {
+        name: "userId",
+        type: AttributeType.STRING,
+      },
+      sortKey: {
+        name: "createdAt",
+        type: AttributeType.NUMBER,
+      },
+    });
+
     const canvasLayer = LayerVersion.fromLayerVersionArn(
       this,
       "lambda-layer-canvas-nodejs",
-      "arn:aws:lambda:us-east-1:432599188850:layer:canvas-nodejs:1"
+      "arn:aws:lambda:us-east-1:266735801881:layer:canvas-nodejs:1"
     );
 
-    // handles the splitting of the uploaded image
     const splittingLambda = new NodejsFunction(
       this,
       "rgb-splitting-lambda-sh",
       {
         functionName: "rgb-splitting-lambda-sh",
+        description:
+          "this lambda is used for processing the image that was uploaded to s3",
         timeout: cdk.Duration.minutes(1.5),
         runtime: Runtime.NODEJS_20_X,
         environment: {
@@ -113,6 +128,25 @@ export class RgbSplittingStack extends cdk.Stack {
       }
     );
 
+    //lambda used to generate the presigned urls
+    const generatePresignedUrlLambda = new NodejsFunction(
+      this,
+      "rgb-generate-presigned-url-lambda",
+      {
+        functionName: "generate-presigned-url-lambda",
+        description:
+          "This lambda generates presigned urls to users with valid apikeys",
+        timeout: cdk.Duration.seconds(10),
+        runtime: Runtime.NODEJS_20_X,
+        environment: {
+          BUCKET_NAME: S3Bucket.name,
+          REGION: region,
+        },
+        entry: "./resources/generate-presigned-url.ts",
+        handler: "handler",
+      }
+    );
+
     //used to generate an api key and add that key to a usage plan
     const generateApiKeyLambda = new NodejsFunction(
       this,
@@ -127,7 +161,9 @@ export class RgbSplittingStack extends cdk.Stack {
         environment: {
           REGION: region,
           TABLE_NAME: usersTable.tableName,
-          USAGE_PLAN_ID: usagePlanId,
+          FREE_TIER_USAGE_PLAN_ID: freeTierUsagePlanId,
+          PRO_TIER_USAGE_PLAN_ID: proTierUsagePlanId,
+          EXECUTIVE_TIER_USAGE_PLAN_ID: executiveTierUsagePlanId,
         },
         timeout: cdk.Duration.seconds(20),
       }
@@ -152,47 +188,37 @@ export class RgbSplittingStack extends cdk.Stack {
       }
     );
 
-    //the  lambda that handles authorizations
+    //the lambda that handles authorizations
     const getAllUserApiKeysAuthorizerLambda = new NodejsFunction(
       this,
       "rgbAllApiKeysAuthorizer",
       {
-        functionName: "rgb-splitting-get-all-user-api-keys-authorizer-lambda",
+        functionName: "rgb-All-ApiKeys-Authorizer-lambda",
         description:
           "This lambda acts as an authorizer for the getAllUserApiKeysRoute",
         runtime: Runtime.NODEJS_22_X,
-        entry: "./resources/get-all-user-api-keys-auth-lambda.ts",
+        entry: "./resources/authorizer-lambda-handler.ts",
         handler: "handler",
-        environment: {
-          CLERK_JWT: clerkJwtKey,
-        },
         timeout: cdk.Duration.seconds(20),
       }
     );
 
-    //create the rest api
-    const restApi = new RestApi(this, "rgb-splitting-rest-api-sh", {
-      restApiName: "rgb-splitting-rest-api-sh",
-      description: "the base rest api for the rgb splitting",
-      defaultCorsPreflightOptions: {
-        allowOrigins: Cors.ALL_ORIGINS,
-        allowMethods: [CorsHttpMethod.POST],
-      },
-      apiKeySourceType: ApiKeySourceType.HEADER, //the api key should be included in their headers
-      binaryMediaTypes: ["image/png", "image/jpeg", "multipart/form-data"],
-    });
-
-    // the lambda authorizer
     const lambdaAuthorizer = new TokenAuthorizer(this, "rgbRestApiAuthorizer", {
       handler: getAllUserApiKeysAuthorizerLambda,
       authorizerName: "rgb-rest-api-token-authorizer",
       identitySource: "method.request.header.Authorization",
     });
 
-    const v1Root = restApi.root.addResource("v1");
+    //get the rest api we created in the api stack
+    const rgbRestApi = RestApi.fromRestApiAttributes(this, "rgb-rest-api", {
+      restApiId: rgbRestApiId,
+      rootResourceId: rgbRestApiRootResourceId,
+    });
 
-    //this is the route integrated with our lambda
-    const processRoute = v1Root.addResource("process");
+    const v1Root = rgbRestApi.root.addResource("v1");
+
+    // route to generate presigned url
+    const generatePresignedUrlRoute = v1Root.addResource("process");
 
     //route to generate the api key
     const generateApiKeyRoute = v1Root.addResource("generate-api-key");
@@ -201,57 +227,22 @@ export class RgbSplittingStack extends cdk.Stack {
     const allApiKeys = v1Root.addResource("keys");
     const getUsersApiKeysRoute = allApiKeys.addResource("{userId}");
 
-    // integrate the process route with the splitting lambda
-    const processRouteIntegration = new LambdaIntegration(splittingLambda);
-
-    // integrate generate api key route with the generate lambda
-    const generateApiKeyIntegration = new LambdaIntegration(
-      generateApiKeyLambda
+    generatePresignedUrlRoute.addMethod(
+      HttpMethod.POST,
+      new LambdaIntegration(generatePresignedUrlLambda),
+      {
+        apiKeyRequired: true,
+      }
     );
 
-    const getAllUsersApiKeysIntegration = new LambdaIntegration(
-      getUsersApiKeysLambda
+    generateApiKeyRoute.addMethod(
+      HttpMethod.POST,
+      new LambdaIntegration(generateApiKeyLambda)
     );
-
-    //when the rest api is created, this custome resource would run,
-    //it's function is to attach the rest api created to the specified usage plan
-    new AwsCustomResource(this, "AttachApiToUsagePlan", {
-      onCreate: {
-        service: "APIGateway",
-        action: "updateUsagePlan",
-        parameters: {
-          usagePlanId,
-          patchOperations: [
-            {
-              op: "add",
-              path: "/apiStages",
-              value: `${restApi.restApiId}:${restApi.deploymentStage.stageName}`,
-            },
-          ],
-        },
-        physicalResourceId: PhysicalResourceId.of("rgb-usage-plan-attacher"),
-      },
-      policy: AwsCustomResourcePolicy.fromStatements([
-        new PolicyStatement({
-          actions: ["apigateway:PATCH"],
-          resources: [
-            `arn:aws:apigateway:${region}::/usageplans/${usagePlanId}`, // give the custom resouce permission to perform pacth updates on this particular usage plan
-          ],
-        }),
-      ]),
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
-    });
-
-    //integrate the process route with our splitting lambda
-    processRoute.addMethod(HttpMethod.POST, processRouteIntegration, {
-      apiKeyRequired: true,
-    });
-
-    generateApiKeyRoute.addMethod(HttpMethod.POST, generateApiKeyIntegration);
 
     getUsersApiKeysRoute.addMethod(
       HttpMethod.GET,
-      getAllUsersApiKeysIntegration,
+      new LambdaIntegration(getUsersApiKeysLambda),
       {
         authorizer: lambdaAuthorizer,
         authorizationType: AuthorizationType.CUSTOM,
@@ -259,26 +250,44 @@ export class RgbSplittingStack extends cdk.Stack {
     );
 
     //grant the generate apiKey Lambda permission to create new ApiKeys & fetch all our available keys
+    //grant it permission to modify our usage plans
     generateApiKeyLambda.addToRolePolicy(
       new PolicyStatement({
-        actions: [
-          "apigateway:POST", // Allow creating new API keys
-          "apigateway:PATCH", // Allow updating usage plan
-        ],
+        actions: ["apigateway:POST", "apigateway:PATCH"],
         resources: [
           `arn:aws:apigateway:${region}::/apikeys`,
-          `arn:aws:apigateway:${region}::/usageplans/${usagePlanId}`, //the usage plan we are allowing the lambda update
-          `arn:aws:apigateway:${region}::/usageplans/${usagePlanId}/keys`, // allow the lambda permission to list the apikeys in the usage plan
+          `arn:aws:apigateway:${region}::/usageplans/${freeTierUsagePlanId}`,
+          `arn:aws:apigateway:${region}::/usageplans/${proTierUsagePlanId}`,
+          `arn:aws:apigateway:${region}::/usageplans/${executiveTierUsagePlanId}`,
+          `arn:aws:apigateway:${region}::/usageplans/${freeTierUsagePlanId}/keys`,
+          `arn:aws:apigateway:${region}::/usageplans/${proTierUsagePlanId}/keys`,
+          `arn:aws:apigateway:${region}::/usageplans/${executiveTierUsagePlanId}/keys`,
         ],
       })
     );
 
-    s3Bucket.grantWrite(splittingLambda);
+    //allow the authorizer lambda to get the JWT public key from secret storage
+    getAllUserApiKeysAuthorizerLambda.addToRolePolicy(
+      new PolicyStatement({
+        actions: ["secretsmanager:GetSecretValue"],
+        resources: [
+          `arn:aws:secretsmanager:${this.region}:${this.account}:secret:RGB_CLERK_JWT_PUBLIC_KEY*`,
+        ],
+      })
+    );
 
-    //allow the splitting lambda write to the database
+    s3Bucket.grantReadWrite(splittingLambda);
+
+    s3Bucket.grantPut(generatePresignedUrlLambda);
+
+    //trigger the splitting lambda when there is a new object added to the s3 bucket
+    s3Bucket.addEventNotification(
+      EventType.OBJECT_CREATED_PUT,
+      new LambdaDestination(splittingLambda)
+    );
+
     usersTable.grantWriteData(splittingLambda);
 
-    //allow the sign up lambda write to the database
     usersTable.grantWriteData(generateApiKeyLambda);
 
     //allow the getUserApiKeys lambda to read from our database

@@ -15,25 +15,39 @@ const dynamo = DynamoDBDocumentClient.from(client);
 export const handler = async (event: APIGatewayProxyEventV2) => {
   const pathParameters = event.pathParameters;
 
-  //validate the path parameters
   const { data, success, error } =
     allUserApiKeysPathParamtersValidator.safeParse(pathParameters);
 
   if (!success) {
-    return { statusCode: 400, body: JSON.stringify(error.message) };
+    console.log("Invalid Request Body", error.issues);
+
+    return { statusCode: 400, body: JSON.stringify(error.issues) };
   }
 
-  //fetch the users api keys from dynamo
   //TODO: PAGINATE THIS, ONLY 10 AT ONCE
-  const usersApiKeys = await dynamo.send(
-    new QueryCommand({
-      TableName: tableName,
-      KeyConditionExpression: "userId = :userId",
-      ExpressionAttributeValues: {
-        ":userId": data.userId,
-      },
-    })
-  );
+  try {
+    const usersApiKeys = await dynamo.send(
+      new QueryCommand({
+        TableName: tableName,
+        IndexName: "createdAtIndex",
+        KeyConditionExpression: "userId = :userId",
+        ExpressionAttributeValues: {
+          ":userId": data.userId,
+        },
+        ScanIndexForward: false,
+        Limit: 10,
+      })
+    );
 
-  return { statusCode: 200, body: JSON.stringify(usersApiKeys.Items) };
+    console.log(usersApiKeys.Items);
+
+    return { statusCode: 200, body: JSON.stringify(usersApiKeys.Items) };
+  } catch (error: unknown) {
+    console.log(
+      "FAILED TO GET USERS API KEYS FROM DB",
+      JSON.stringify({ context: "get-all-api-keys", error, date: new Date() })
+    );
+
+    return { statusCode: 500, body: "Internal server error" };
+  }
 };
