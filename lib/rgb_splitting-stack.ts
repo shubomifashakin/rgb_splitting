@@ -4,16 +4,11 @@ import * as cdk from "aws-cdk-lib";
 import { LayerVersion, Runtime } from "aws-cdk-lib/aws-lambda";
 import { BlockPublicAccess, Bucket, EventType } from "aws-cdk-lib/aws-s3";
 import { NodejsFunction } from "aws-cdk-lib/aws-lambda-nodejs";
-import { CorsHttpMethod } from "aws-cdk-lib/aws-apigatewayv2";
 import {
-  ApiKeySourceType,
   AuthorizationType,
-  Cors,
   LambdaIntegration,
-  Period,
   RestApi,
   TokenAuthorizer,
-  UsagePlan,
 } from "aws-cdk-lib/aws-apigateway";
 import { HttpMethod } from "aws-cdk-lib/aws-events";
 import { PolicyStatement } from "aws-cdk-lib/aws-iam";
@@ -23,7 +18,6 @@ import { LambdaDestination } from "aws-cdk-lib/aws-s3-notifications";
 
 import * as dotenv from "dotenv";
 import { RgbApiStack } from "./RgbApiStack";
-import { Secret } from "aws-cdk-lib/aws-secretsmanager";
 
 dotenv.config();
 
@@ -161,9 +155,9 @@ export class RgbSplittingStack extends cdk.Stack {
         environment: {
           REGION: region,
           TABLE_NAME: usersTable.tableName,
-          FREE_TIER_USAGE_PLAN_ID: freeTierUsagePlanId,
-          PRO_TIER_USAGE_PLAN_ID: proTierUsagePlanId,
-          EXECUTIVE_TIER_USAGE_PLAN_ID: executiveTierUsagePlanId,
+          PAYMENT_SECRET_NAME: "RGB_PAYMENT_SECRET",
+          AVAILABLE_PLANS_SECRET_NAME: "RGB_Splitting_Plans",
+          FREE_TIER_PLAN_ID: freeTierUsagePlanId, //TODO: REMOVE THIS, IT WAS JUST FOR TESTING
         },
         timeout: cdk.Duration.seconds(20),
       }
@@ -188,6 +182,23 @@ export class RgbSplittingStack extends cdk.Stack {
       }
     );
 
+    //the lambda for payments
+    const requestPaymentLambda = new NodejsFunction(
+      this,
+      "rgb-Splitting-Payments-Lambda",
+      {
+        functionName: "rgb-Splitting-payments-lambda",
+        description: "This lambda is used to handle subcriptions.",
+        runtime: Runtime.NODEJS_22_X,
+        entry: "./resources/payments-handler.ts",
+        handler: "handler",
+        environment: {
+          PAYMENT_SECRET_NAME: "RGB_PAYMENT_SECRET",
+        },
+        timeout: cdk.Duration.seconds(30),
+      }
+    );
+
     //the lambda that handles authorizations
     const getAllUserApiKeysAuthorizerLambda = new NodejsFunction(
       this,
@@ -200,6 +211,9 @@ export class RgbSplittingStack extends cdk.Stack {
         entry: "./resources/authorizer-lambda-handler.ts",
         handler: "handler",
         timeout: cdk.Duration.seconds(20),
+        environment: {
+          CLERK_JWT_SECRET_NAME: "RGB_CLERK_JWT_PUBLIC_KEY",
+        },
       }
     );
 
@@ -227,6 +241,9 @@ export class RgbSplittingStack extends cdk.Stack {
     const allApiKeys = v1Root.addResource("keys");
     const getUsersApiKeysRoute = allApiKeys.addResource("{userId}");
 
+    //route to request payments
+    const requestPayment = v1Root.addResource("trigger-payment");
+
     generatePresignedUrlRoute.addMethod(
       HttpMethod.POST,
       new LambdaIntegration(generatePresignedUrlLambda),
@@ -249,6 +266,11 @@ export class RgbSplittingStack extends cdk.Stack {
       }
     );
 
+    requestPayment.addMethod(
+      HttpMethod.POST,
+      new LambdaIntegration(requestPaymentLambda)
+    );
+
     //grant the generate apiKey Lambda permission to create new ApiKeys & fetch all our available keys
     //grant it permission to modify our usage plans
     generateApiKeyLambda.addToRolePolicy(
@@ -266,12 +288,32 @@ export class RgbSplittingStack extends cdk.Stack {
       })
     );
 
+    //allow the generateApiKeyLambda to get the payment secret and the splitting plans secret
+    generateApiKeyLambda.addToRolePolicy(
+      new PolicyStatement({
+        actions: ["secretsmanager:GetSecretValue"],
+        resources: [
+          `arn:aws:secretsmanager:us-east-1:266735801881:secret:RGB_PAYMENT_SECRET-XlWWaB`,
+          "arn:aws:secretsmanager:us-east-1:266735801881:secret:RGB_Splitting_Plans-5l3O6l",
+        ],
+      })
+    );
+
     //allow the authorizer lambda to get the JWT public key from secret storage
     getAllUserApiKeysAuthorizerLambda.addToRolePolicy(
       new PolicyStatement({
         actions: ["secretsmanager:GetSecretValue"],
         resources: [
           `arn:aws:secretsmanager:${this.region}:${this.account}:secret:RGB_CLERK_JWT_PUBLIC_KEY*`,
+        ],
+      })
+    );
+
+    requestPaymentLambda.addToRolePolicy(
+      new PolicyStatement({
+        actions: ["secretsmanager:GetSecretValue"],
+        resources: [
+          `arn:aws:secretsmanager:us-east-1:266735801881:secret:RGB_PAYMENT_SECRET-XlWWaB`,
         ],
       })
     );

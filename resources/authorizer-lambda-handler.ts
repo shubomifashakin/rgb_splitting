@@ -9,7 +9,7 @@ interface JWTClaims extends jwt.JwtPayload {
   };
 }
 
-const secret_name = "RGB_CLERK_JWT_PUBLIC_KEY";
+const secret_name = process.env.CLERK_JWT_SECRET_NAME!;
 
 const secretClient = new SecretsManager({
   region: "us-east-1",

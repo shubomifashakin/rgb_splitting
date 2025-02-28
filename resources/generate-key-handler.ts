@@ -1,36 +1,67 @@
-import { APIGateway } from "aws-sdk";
+import * as crypto from "crypto";
+import { APIGateway, SecretsManager } from "aws-sdk";
 import { APIGatewayProxyEventV2, Handler } from "aws-lambda";
-
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
 
 import { v4 as uuid } from "uuid";
 
-import { webHookValidationSchema } from "../helpers/schemaValidator/validators";
-
 const region = process.env.REGION;
 const tableName = process.env.TABLE_NAME;
-const freeTierUsagePlanId = process.env.FREE_TIER_USAGE_PLAN_ID;
-const proTierUsagePlanId = process.env.PRO_TIER_USAGE_PLAN_ID;
-const executiveTierUsagePlanId = process.env.EXECUTIVE_TIER_USAGE_PLAN_ID;
-
-const plans = [
-  freeTierUsagePlanId,
-  proTierUsagePlanId,
-  executiveTierUsagePlanId,
-];
+const paymentSecretName = process.env.PAYMENT_SECRET_NAME!;
+const freeTierUsagePlanId = process.env.FREE_TIER_PLAN_ID!;
+const availablePlansSecretName = process.env.AVAILABLE_PLANS_SECRET_NAME!;
 
 const client = new DynamoDBClient({ region });
 
 const dynamo = DynamoDBDocumentClient.from(client);
 
+const secretClient = new SecretsManager({
+  region: "us-east-1",
+});
+
 //this acts as a  webhook url, only called by the payment gateway
 export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
-  const body = event.body;
-
   const apiGateway = new APIGateway();
 
+  if (!event.body) {
+    return {
+      statusCode: 400,
+      body: JSON.stringify({
+        message: "Bad Request - No body",
+      }),
+    };
+  }
+
   try {
+    //get the payment secret
+    const paymentSecret = await secretClient
+      .getSecretValue({ SecretId: paymentSecretName })
+      .promise();
+
+    if (!paymentSecret.SecretString) {
+      return {
+        statusCode: 500,
+        body: JSON.stringify({
+          message: "Internal Server Error",
+        }),
+      };
+    }
+
+    const hash = crypto
+      .createHmac("sha512", paymentSecret.SecretString)
+      .update(JSON.stringify(event.body))
+      .digest("hex");
+
+    if (hash !== event.headers["x-paystack-signature"]) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({
+          message: "Bad Request - Invalid Signature",
+        }),
+      };
+    }
+
     const apiKey = await apiGateway
       .createApiKey({
         value: uuid(),
@@ -48,9 +79,26 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
       };
     }
 
+    const availablePlans = await secretClient
+      .getSecretValue({ SecretId: availablePlansSecretName })
+      .promise();
+
+    if (!availablePlans.SecretString) {
+      return {
+        statusCode: 500,
+        body: JSON.stringify({
+          message: "Internal Server Error",
+        }),
+      };
+    }
+
+    const allPlans = availablePlans.SecretString;
+
+    console.log(allPlans);
+
     //TODO: ADD THE APIKEY TO THE USAGE PLAN, BASED ON WHAT THE USER PAID FOR
     //add the apikey generated to the usage plan
-    const usagePlans = await apiGateway
+    await apiGateway
       .createUsagePlanKey({
         usagePlanId: freeTierUsagePlanId as string,
         keyId: apiKey.id,
@@ -77,9 +125,11 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
       body: JSON.stringify({ message: "Api key generated", key: apiKey.value }),
     };
   } catch (error: unknown) {
+    console.log(error);
+
     return {
       statusCode: 500,
-      body: JSON.stringify({ message: "Internal server error", error }),
+      body: JSON.stringify({ message: "Internal server error" }),
     };
   }
 };

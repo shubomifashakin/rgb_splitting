@@ -1,15 +1,9 @@
 import { Construct } from "constructs";
 
 import * as cdk from "aws-cdk-lib";
-import {
-  ApiKeySourceType,
-  Cors,
-  Period,
-  RestApi,
-  UsagePlan,
-} from "aws-cdk-lib/aws-apigateway";
-import * as dotenv from "dotenv";
 import { CorsHttpMethod } from "aws-cdk-lib/aws-apigatewayv2";
+import { Cors, Period, RestApi, UsagePlan } from "aws-cdk-lib/aws-apigateway";
+import * as dotenv from "dotenv";
 
 dotenv.config();
 
@@ -36,7 +30,7 @@ export class RgbApiStack extends cdk.Stack {
       description: "the base rest api for the rgb splitting",
       defaultCorsPreflightOptions: {
         allowOrigins: Cors.ALL_ORIGINS,
-        allowMethods: [CorsHttpMethod.POST],
+        allowMethods: [CorsHttpMethod.ANY],
       },
     });
 
