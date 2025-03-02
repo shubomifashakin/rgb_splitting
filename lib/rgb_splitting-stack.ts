@@ -1,5 +1,7 @@
 import { Construct } from "constructs";
 
+import { RgbApiStack } from "./RgbApiStack";
+
 import * as cdk from "aws-cdk-lib";
 import { LayerVersion, Runtime } from "aws-cdk-lib/aws-lambda";
 import { BlockPublicAccess, Bucket, EventType } from "aws-cdk-lib/aws-s3";
@@ -17,12 +19,14 @@ import { AttributeType, Table } from "aws-cdk-lib/aws-dynamodb";
 import { LambdaDestination } from "aws-cdk-lib/aws-s3-notifications";
 
 import * as dotenv from "dotenv";
-import { RgbApiStack } from "./RgbApiStack";
 
 dotenv.config();
 
-const region = process.env.REGION;
-const clerkJwtKey = process.env.CLERK_JWT_KEY;
+const region = process.env.REGION!;
+const paymentSecretName = process.env.PAYMENT_SECRET_NAME!;
+const webhookSecretName = process.env.WEBHOOK_SECRET_NAME!;
+const clerkJwtSecretName = process.env.CLERK_JWT_SECRET_NAME!;
+const availablePlansSecretName = process.env.AVAILABLE_PLANS_SECRET_NAME!;
 
 interface RgbSplittingStackProps extends cdk.StackProps {
   RGBApiStack: RgbApiStack;
@@ -37,21 +41,15 @@ export class RgbSplittingStack extends cdk.Stack {
       },
     });
 
-    if (typeof region !== "string") {
-      throw new Error("Region does not exist in environment");
-    }
-
-    if (typeof clerkJwtKey !== "string") {
-      throw new Error("Clerk Jwt does not exist in environment");
-    }
-
     const rgbRestApiId = props.RGBApiStack.RgbRestApiId;
-    const rgbRestApiRootResourceId = props.RGBApiStack.RgbRestApiRootResourceId;
-    const freeTierUsagePlanId = props.RGBApiStack.freeTierUsagePlanId;
     const proTierUsagePlanId = props.RGBApiStack.proTierUsagePlanId;
+    const freeTierUsagePlanId = props.RGBApiStack.freeTierUsagePlanId;
+    const rgbRestApiRootResourceId = props.RGBApiStack.RgbRestApiRootResourceId;
     const executiveTierUsagePlanId = props.RGBApiStack.executiveTierUsagePlanId;
 
-    const s3Bucket = new Bucket(this, "rgb-splitting-bucket-sh", {
+    const projectPrefix = "rgb-splitting";
+
+    const s3Bucket = new Bucket(this, `${projectPrefix}-bucket-sh`, {
       versioned: true,
       publicReadAccess: true,
       bucketName: "rgb-split-bucket-sh",
@@ -59,15 +57,15 @@ export class RgbSplittingStack extends cdk.Stack {
       blockPublicAccess: BlockPublicAccess.BLOCK_ACLS,
     });
 
-    const usersTable = new Table(this, "rgb-splitting-table-sh", {
-      tableName: "rgb-splitting-table-sh",
+    const usersTable = new Table(this, `${projectPrefix}-table-sh`, {
+      tableName: `${projectPrefix}-table-sh`,
       partitionKey: {
         name: "userId",
         type: AttributeType.STRING,
       },
       sortKey: {
-        name: "apiKey",
-        type: AttributeType.STRING,
+        name: "createdAt",
+        type: AttributeType.NUMBER,
       },
       pointInTimeRecoverySpecification: {
         pointInTimeRecoveryEnabled: true,
@@ -78,12 +76,16 @@ export class RgbSplittingStack extends cdk.Stack {
     usersTable.addGlobalSecondaryIndex({
       indexName: "createdAtIndex",
       partitionKey: {
-        name: "userId",
-        type: AttributeType.STRING,
-      },
-      sortKey: {
         name: "createdAt",
         type: AttributeType.NUMBER,
+      },
+    });
+
+    usersTable.addGlobalSecondaryIndex({
+      indexName: "projectIdIndex",
+      partitionKey: {
+        name: "id",
+        type: AttributeType.STRING,
       },
     });
 
@@ -95,9 +97,9 @@ export class RgbSplittingStack extends cdk.Stack {
 
     const splittingLambda = new NodejsFunction(
       this,
-      "rgb-splitting-lambda-sh",
+      `${projectPrefix}-lambda-sh`,
       {
-        functionName: "rgb-splitting-lambda-sh",
+        functionName: `${projectPrefix}-lambda-sh`,
         description:
           "this lambda is used for processing the image that was uploaded to s3",
         timeout: cdk.Duration.minutes(1.5),
@@ -141,34 +143,30 @@ export class RgbSplittingStack extends cdk.Stack {
       }
     );
 
-    //used to generate an api key and add that key to a usage plan
-    const generateApiKeyLambda = new NodejsFunction(
-      this,
-      "generateApiKeyLambda",
-      {
-        functionName: "rgb-splitting-generate-key-lambda",
-        description:
-          "This lambda is used to generate an api key & add the generated api key to the usage plan passed",
-        runtime: Runtime.NODEJS_22_X,
-        entry: "./resources/generate-key-handler.ts",
-        handler: "handler",
-        environment: {
-          REGION: region,
-          TABLE_NAME: usersTable.tableName,
-          PAYMENT_SECRET_NAME: "RGB_PAYMENT_SECRET",
-          AVAILABLE_PLANS_SECRET_NAME: "RGB_Splitting_Plans",
-          FREE_TIER_PLAN_ID: freeTierUsagePlanId, //TODO: REMOVE THIS, IT WAS JUST FOR TESTING
-        },
-        timeout: cdk.Duration.seconds(20),
-      }
-    );
+    //used to verify webhooks,
+    const webHookLambda = new NodejsFunction(this, "rgb-webHook-Lambda", {
+      functionName: `${projectPrefix}-webhook-lambda`,
+      description:
+        "This lambda receives webhook events from our payment gateway",
+      runtime: Runtime.NODEJS_22_X,
+      entry: "./resources/webhook-handler.ts",
+      handler: "handler",
+      environment: {
+        REGION: region,
+        TABLE_NAME: usersTable.tableName,
+        PAYMENT_SECRET_NAME: paymentSecretName,
+        AVAILABLE_PLANS_SECRET_NAME: availablePlansSecretName,
+        WEBHOOK_SECRET_NAME: webhookSecretName,
+      },
+      timeout: cdk.Duration.seconds(20),
+    });
 
     //used to get all the api keys owned by a particular user
     const getUsersApiKeysLambda = new NodejsFunction(
       this,
-      "rgb-splitting-get-all-user-api-keys-lambda",
+      `${projectPrefix}-get-all-user-api-keys-lambda`,
       {
-        functionName: "rgb-splitting-get-all-user-api-keys-lambda",
+        functionName: `${projectPrefix}-get-all-user-api-keys-lambda`,
         description:
           "This lambda is used for getting all the api keys for a particula user",
         runtime: Runtime.NODEJS_22_X,
@@ -182,24 +180,24 @@ export class RgbSplittingStack extends cdk.Stack {
       }
     );
 
-    //the lambda for payments
     const requestPaymentLambda = new NodejsFunction(
       this,
-      "rgb-Splitting-Payments-Lambda",
+      `${projectPrefix}-Payments-Lambda`,
       {
-        functionName: "rgb-Splitting-payments-lambda",
+        functionName: `${projectPrefix}-payments-lambda`,
         description: "This lambda is used to handle subcriptions.",
         runtime: Runtime.NODEJS_22_X,
         entry: "./resources/payments-handler.ts",
         handler: "handler",
         environment: {
-          PAYMENT_SECRET_NAME: "RGB_PAYMENT_SECRET",
+          REGION: region,
+          PAYMENT_SECRET_NAME: paymentSecretName,
+          AVAILABLE_PLANS_SECRET_NAME: availablePlansSecretName,
         },
         timeout: cdk.Duration.seconds(30),
       }
     );
 
-    //the lambda that handles authorizations
     const getAllUserApiKeysAuthorizerLambda = new NodejsFunction(
       this,
       "rgbAllApiKeysAuthorizer",
@@ -212,7 +210,7 @@ export class RgbSplittingStack extends cdk.Stack {
         handler: "handler",
         timeout: cdk.Duration.seconds(20),
         environment: {
-          CLERK_JWT_SECRET_NAME: "RGB_CLERK_JWT_PUBLIC_KEY",
+          CLERK_JWT_SECRET_NAME: clerkJwtSecretName,
         },
       }
     );
@@ -234,8 +232,8 @@ export class RgbSplittingStack extends cdk.Stack {
     // route to generate presigned url
     const generatePresignedUrlRoute = v1Root.addResource("process");
 
-    //route to generate the api key
-    const generateApiKeyRoute = v1Root.addResource("generate-api-key");
+    //route for webhook events
+    const webHookEventsRoute = v1Root.addResource("webhook");
 
     //route to fetch all the api keys a user has
     const allApiKeys = v1Root.addResource("keys");
@@ -252,9 +250,9 @@ export class RgbSplittingStack extends cdk.Stack {
       }
     );
 
-    generateApiKeyRoute.addMethod(
+    webHookEventsRoute.addMethod(
       HttpMethod.POST,
-      new LambdaIntegration(generateApiKeyLambda)
+      new LambdaIntegration(webHookLambda)
     );
 
     getUsersApiKeysRoute.addMethod(
@@ -271,9 +269,9 @@ export class RgbSplittingStack extends cdk.Stack {
       new LambdaIntegration(requestPaymentLambda)
     );
 
-    //grant the generate apiKey Lambda permission to create new ApiKeys & fetch all our available keys
+    //grant the webhook Lambda permission to create new ApiKeys & fetch all our available keys
     //grant it permission to modify our usage plans
-    generateApiKeyLambda.addToRolePolicy(
+    webHookLambda.addToRolePolicy(
       new PolicyStatement({
         actions: ["apigateway:POST", "apigateway:PATCH"],
         resources: [
@@ -288,23 +286,14 @@ export class RgbSplittingStack extends cdk.Stack {
       })
     );
 
-    //allow the generateApiKeyLambda to get the payment secret and the splitting plans secret
-    generateApiKeyLambda.addToRolePolicy(
+    //allow the webHookLambda to get the necessary secrets from secret manager
+    webHookLambda.addToRolePolicy(
       new PolicyStatement({
         actions: ["secretsmanager:GetSecretValue"],
         resources: [
           `arn:aws:secretsmanager:us-east-1:266735801881:secret:RGB_PAYMENT_SECRET-XlWWaB`,
           "arn:aws:secretsmanager:us-east-1:266735801881:secret:RGB_Splitting_Plans-5l3O6l",
-        ],
-      })
-    );
-
-    //allow the authorizer lambda to get the JWT public key from secret storage
-    getAllUserApiKeysAuthorizerLambda.addToRolePolicy(
-      new PolicyStatement({
-        actions: ["secretsmanager:GetSecretValue"],
-        resources: [
-          `arn:aws:secretsmanager:${this.region}:${this.account}:secret:RGB_CLERK_JWT_PUBLIC_KEY*`,
+          "arn:aws:secretsmanager:us-east-1:266735801881:secret:RGB_WEBHOOK_SECRET-dZnzxj",
         ],
       })
     );
@@ -313,7 +302,17 @@ export class RgbSplittingStack extends cdk.Stack {
       new PolicyStatement({
         actions: ["secretsmanager:GetSecretValue"],
         resources: [
-          `arn:aws:secretsmanager:us-east-1:266735801881:secret:RGB_PAYMENT_SECRET-XlWWaB`,
+          `arn:aws:secretsmanager:${this.region}:${this.account}:secret:RGB_PAYMENT_SECRET*`,
+          `arn:aws:secretsmanager:${this.region}:${this.account}:secret:RGB_Splitting_Plans*`,
+        ],
+      })
+    );
+
+    getAllUserApiKeysAuthorizerLambda.addToRolePolicy(
+      new PolicyStatement({
+        actions: ["secretsmanager:GetSecretValue"],
+        resources: [
+          `arn:aws:secretsmanager:${this.region}:${this.account}:secret:RGB_CLERK_JWT_PUBLIC_KEY*`,
         ],
       })
     );
@@ -328,11 +327,10 @@ export class RgbSplittingStack extends cdk.Stack {
       new LambdaDestination(splittingLambda)
     );
 
+    usersTable.grantReadWriteData(webHookLambda);
+
     usersTable.grantWriteData(splittingLambda);
 
-    usersTable.grantWriteData(generateApiKeyLambda);
-
-    //allow the getUserApiKeys lambda to read from our database
     usersTable.grantReadData(getUsersApiKeysLambda);
   }
 }

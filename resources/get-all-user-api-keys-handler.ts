@@ -3,8 +3,6 @@ import { APIGatewayProxyEventV2 } from "aws-lambda";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
 
-import { allUserApiKeysPathParamtersValidator } from "../helpers/schemaValidator/validators";
-
 const region = process.env.REGION;
 const tableName = process.env.TABLE_NAME;
 
@@ -15,13 +13,18 @@ const dynamo = DynamoDBDocumentClient.from(client);
 export const handler = async (event: APIGatewayProxyEventV2) => {
   const pathParameters = event.pathParameters;
 
-  const { data, success, error } =
-    allUserApiKeysPathParamtersValidator.safeParse(pathParameters);
+  if (!pathParameters) {
+    return {
+      statusCode: 400,
+      body: JSON.stringify({ message: "No user id provided" }),
+    };
+  }
 
-  if (!success) {
-    console.log("Invalid Request Body", error.issues);
-
-    return { statusCode: 400, body: JSON.stringify(error.issues) };
+  if (!pathParameters.userId) {
+    return {
+      statusCode: 400,
+      body: JSON.stringify({ message: "No user Id provided" }),
+    };
   }
 
   //TODO: PAGINATE THIS, ONLY 10 AT ONCE
@@ -29,17 +32,15 @@ export const handler = async (event: APIGatewayProxyEventV2) => {
     const usersApiKeys = await dynamo.send(
       new QueryCommand({
         TableName: tableName,
-        IndexName: "createdAtIndex",
         KeyConditionExpression: "userId = :userId",
         ExpressionAttributeValues: {
-          ":userId": data.userId,
+          ":userId": pathParameters.userId,
         },
-        ScanIndexForward: false,
         Limit: 10,
+        ScanIndexForward: false,
+        ProjectionExpression: "createdAt, apiKeyInfo.apiKey, id, projectName",
       })
     );
-
-    console.log(usersApiKeys.Items);
 
     return { statusCode: 200, body: JSON.stringify(usersApiKeys.Items) };
   } catch (error: unknown) {
