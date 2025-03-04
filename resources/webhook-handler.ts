@@ -6,6 +6,7 @@ import {
   PutCommand,
   UpdateCommand,
   QueryCommand,
+  GetCommand,
 } from "@aws-sdk/lib-dynamodb";
 
 import { v4 as uuid } from "uuid";
@@ -16,14 +17,12 @@ import {
 } from "../types/webHookEventTypes";
 import { ChargeVerificationStatus } from "../types/chargeVerificationStatus";
 
-import { getOneMonthFromNow } from "../helpers/oneMonthFromNow";
-import { usagePlanValidator } from "../helpers/schemaValidator/validators";
+import { getOneMonthFromNow } from "../helpers/fns/oneMonthFromNow";
 
 const region = process.env.REGION;
 const tableName = process.env.TABLE_NAME;
 const paymentGatewaySecretName = process.env.PAYMENT_SECRET_NAME!;
 const webhookEventVerifierSecretName = process.env.WEBHOOK_SECRET_NAME!;
-const availableUsagePlansSecretName = process.env.AVAILABLE_PLANS_SECRET_NAME!;
 
 const client = new DynamoDBClient({ region });
 
@@ -149,18 +148,17 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
 
       //check if the project already exists in the database
       const existingProject = await dynamo.send(
-        new QueryCommand({
+        new GetCommand({
           TableName: tableName,
-          IndexName: "projectIdIndex",
-          KeyConditionExpression: "id = :id",
-          ExpressionAttributeValues: {
-            ":id": webHookEvent.meta_data.projectId,
+          Key: {
+            id: webHookEvent.meta_data.projectId,
+            userId: webHookEvent.meta_data.userId,
           },
-          Limit: 1,
+          ProjectionExpression: "apiKeyInfo, userId, createdAt",
         })
       );
 
-      if (!existingProject.Items || !existingProject.Items.length) {
+      if (!existingProject.Item) {
         const apiKey = await apiGateway
           .createApiKey({
             value: uuid(),
@@ -195,12 +193,12 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
           new PutCommand({
             TableName: tableName,
             Item: {
-              status: "active",
+              sub_status: "active",
               email: eventData.customer.email,
               id: webHookEvent.meta_data.projectId,
               userId: webHookEvent.meta_data.userId,
               projectName: webHookEvent.meta_data.projectName,
-              nextPaymentDate: getOneMonthFromNow().getTime(),
+              nextPaymentDate: Date.now(),
               createdAt: new Date(eventData.created_at).getTime(),
               apiKeyInfo: {
                 apiKey: apiKey.value,
@@ -222,16 +220,54 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
       }
 
       //if there is an existing project, update the next payment date
+
+      //check if their current usage plan is the same as the one provided in the webhook
+
+      //if it isnt, update the user to the correct usage plan
+      if (
+        existingProject.Item.apiKeyInfo.usagePlanId !==
+        webHookEvent.meta_data.usagePlanId
+      ) {
+        const apiKey = await apiGateway
+          .getApiKey({ apiKey: existingProject.Item.apiKeyInfo.apiKey })
+          .promise();
+
+        if (!apiKey.id || !apiKey.value) {
+          throw new Error("Failed to get api key");
+        }
+
+        //CANT RUN IN PARALLEl BECAUSE AN APIKEY CAN ONLY BELONG TO 1 USAGE PLAN AT A TIME
+        //remove the user from the old usage plan
+        await apiGateway
+          .deleteUsagePlanKey({
+            usagePlanId: existingProject.Item.apiKeyInfo.usagePlanId,
+            keyId: apiKey.id,
+          })
+          .promise();
+
+        //add their apikey to the new usage plan
+        await apiGateway
+          .createUsagePlanKey({
+            usagePlanId: webHookEvent.meta_data.usagePlanId,
+            keyId: apiKey.id,
+            keyType: "API_KEY",
+          })
+          .promise();
+      }
+
       await dynamo.send(
         new UpdateCommand({
           TableName: tableName,
           Key: {
             id: webHookEvent.meta_data.projectId,
+            userId: webHookEvent.meta_data.userId,
           },
-          UpdateExpression: "SET nextPaymentDate = :nextPaymentDate",
-
+          UpdateExpression:
+            "set nextPaymentDate = :currentTimestamp, apiKeyInfo.usagePlanId = :usagePlanId, apiKeyInfo.currentPlan = :planName",
           ExpressionAttributeValues: {
-            ":nextPaymentDate": getOneMonthFromNow(),
+            ":currentTimestamp": Date.now(),
+            ":usagePlanId": webHookEvent.meta_data.usagePlanId,
+            ":planName": webHookEvent.meta_data.planName,
           },
         })
       );

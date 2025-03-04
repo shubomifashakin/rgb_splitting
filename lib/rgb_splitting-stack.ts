@@ -12,13 +12,17 @@ import {
   RestApi,
   TokenAuthorizer,
 } from "aws-cdk-lib/aws-apigateway";
-import { HttpMethod } from "aws-cdk-lib/aws-events";
+import { HttpMethod, Schedule } from "aws-cdk-lib/aws-events";
 import { PolicyStatement } from "aws-cdk-lib/aws-iam";
 import { S3Bucket } from "aws-cdk-lib/aws-kinesisfirehose";
 import { AttributeType, Table } from "aws-cdk-lib/aws-dynamodb";
 import { LambdaDestination } from "aws-cdk-lib/aws-s3-notifications";
 
 import * as dotenv from "dotenv";
+import {
+  EventBridgeSchedulerCreateScheduleTask,
+  EventBridgeSchedulerTarget,
+} from "aws-cdk-lib/aws-stepfunctions-tasks";
 
 dotenv.config();
 
@@ -60,12 +64,12 @@ export class RgbSplittingStack extends cdk.Stack {
     const usersTable = new Table(this, `${projectPrefix}-table-sh`, {
       tableName: `${projectPrefix}-table-sh`,
       partitionKey: {
-        name: "userId",
+        name: "id",
         type: AttributeType.STRING,
       },
       sortKey: {
-        name: "createdAt",
-        type: AttributeType.NUMBER,
+        name: "userId",
+        type: AttributeType.STRING,
       },
       pointInTimeRecoverySpecification: {
         pointInTimeRecoveryEnabled: true,
@@ -74,17 +78,22 @@ export class RgbSplittingStack extends cdk.Stack {
     });
 
     usersTable.addGlobalSecondaryIndex({
-      indexName: "createdAtIndex",
+      indexName: "expiredSubscriptionIndex",
       partitionKey: {
-        name: "createdAt",
+        name: "sub_status",
+        type: AttributeType.STRING,
+      },
+
+      sortKey: {
+        name: "nextPaymentDate",
         type: AttributeType.NUMBER,
       },
     });
 
     usersTable.addGlobalSecondaryIndex({
-      indexName: "projectIdIndex",
+      indexName: "userIdIndex",
       partitionKey: {
-        name: "id",
+        name: "userId",
         type: AttributeType.STRING,
       },
     });
@@ -92,7 +101,7 @@ export class RgbSplittingStack extends cdk.Stack {
     const canvasLayer = LayerVersion.fromLayerVersionArn(
       this,
       "lambda-layer-canvas-nodejs",
-      "arn:aws:lambda:us-east-1:266735801881:layer:canvas-nodejs:1"
+      `arn:aws:lambda:${this.region}:${this.account}:layer:canvas-nodejs:1`
     );
 
     const splittingLambda = new NodejsFunction(
@@ -105,7 +114,7 @@ export class RgbSplittingStack extends cdk.Stack {
         timeout: cdk.Duration.minutes(1.5),
         runtime: Runtime.NODEJS_20_X,
         environment: {
-          REGION: region,
+          REGION: this.region,
           BUCKET_NAME: s3Bucket.bucketName,
           TABLE_NAME: usersTable.tableName,
         },
@@ -127,16 +136,16 @@ export class RgbSplittingStack extends cdk.Stack {
     //lambda used to generate the presigned urls
     const generatePresignedUrlLambda = new NodejsFunction(
       this,
-      "rgb-generate-presigned-url-lambda",
+      `${projectPrefix}-generate-presigned-url-lambda`,
       {
-        functionName: "generate-presigned-url-lambda",
+        functionName: `${projectPrefix}-generate-presigned-url-lambda`,
         description:
           "This lambda generates presigned urls to users with valid apikeys",
         timeout: cdk.Duration.seconds(10),
         runtime: Runtime.NODEJS_20_X,
         environment: {
           BUCKET_NAME: S3Bucket.name,
-          REGION: region,
+          REGION: this.region,
         },
         entry: "./resources/generate-presigned-url.ts",
         handler: "handler",
@@ -144,22 +153,26 @@ export class RgbSplittingStack extends cdk.Stack {
     );
 
     //used to verify webhooks,
-    const webHookLambda = new NodejsFunction(this, "rgb-webHook-Lambda", {
-      functionName: `${projectPrefix}-webhook-lambda`,
-      description:
-        "This lambda receives webhook events from our payment gateway",
-      runtime: Runtime.NODEJS_22_X,
-      entry: "./resources/webhook-handler.ts",
-      handler: "handler",
-      environment: {
-        REGION: region,
-        TABLE_NAME: usersTable.tableName,
-        PAYMENT_SECRET_NAME: paymentSecretName,
-        AVAILABLE_PLANS_SECRET_NAME: availablePlansSecretName,
-        WEBHOOK_SECRET_NAME: webhookSecretName,
-      },
-      timeout: cdk.Duration.seconds(20),
-    });
+    const webHookLambda = new NodejsFunction(
+      this,
+      `${projectPrefix}-webHook-Lambda`,
+      {
+        functionName: `${projectPrefix}-webhook-lambda`,
+        description:
+          "This lambda receives webhook events from our payment gateway",
+        runtime: Runtime.NODEJS_22_X,
+        entry: "./resources/webhook-handler.ts",
+        handler: "handler",
+        environment: {
+          REGION: this.region,
+          TABLE_NAME: usersTable.tableName,
+          PAYMENT_SECRET_NAME: paymentSecretName,
+          AVAILABLE_PLANS_SECRET_NAME: availablePlansSecretName,
+          WEBHOOK_SECRET_NAME: webhookSecretName,
+        },
+        timeout: cdk.Duration.seconds(20),
+      }
+    );
 
     //used to get all the api keys owned by a particular user
     const getUsersApiKeysLambda = new NodejsFunction(
@@ -173,7 +186,7 @@ export class RgbSplittingStack extends cdk.Stack {
         entry: "./resources/get-all-user-api-keys-handler.ts",
         handler: "handler",
         environment: {
-          REGION: region,
+          REGION: this.region,
           TABLE_NAME: usersTable.tableName,
         },
         timeout: cdk.Duration.seconds(30),
@@ -190,7 +203,7 @@ export class RgbSplittingStack extends cdk.Stack {
         entry: "./resources/payments-handler.ts",
         handler: "handler",
         environment: {
-          REGION: region,
+          REGION: this.region,
           PAYMENT_SECRET_NAME: paymentSecretName,
           AVAILABLE_PLANS_SECRET_NAME: availablePlansSecretName,
         },
@@ -200,9 +213,9 @@ export class RgbSplittingStack extends cdk.Stack {
 
     const getAllUserApiKeysAuthorizerLambda = new NodejsFunction(
       this,
-      "rgbAllApiKeysAuthorizer",
+      `${projectPrefix}-all-apiKeys-authorizer-lambda`,
       {
-        functionName: "rgb-All-ApiKeys-Authorizer-lambda",
+        functionName: `${projectPrefix}-all-apiKeys-authorizer-lambda`,
         description:
           "This lambda acts as an authorizer for the getAllUserApiKeysRoute",
         runtime: Runtime.NODEJS_22_X,
@@ -214,18 +227,45 @@ export class RgbSplittingStack extends cdk.Stack {
         },
       }
     );
+    const resubscribeLambda = new NodejsFunction(
+      this,
+      `${projectPrefix}-resubscribe-lambda`,
+      {
+        functionName: `${projectPrefix}-resubscribe-lambda`,
+        description:
+          "This lambda is used for resubscribing all users with expired subscriptions to their plan. It runs every week, triggered by the event bridge rule",
+        runtime: Runtime.NODEJS_22_X,
+        entry: "./resources/resubscribe.ts",
+        handler: "handler",
+        environment: {
+          REGION: this.region,
+          TABLE_NAME: usersTable.tableName,
+          PAYMENT_SECRET_NAME: paymentSecretName,
+          AVAILABLE_PLANS_SECRET_NAME: availablePlansSecretName,
+        },
+        timeout: cdk.Duration.minutes(2), //TODO: CHANGE TO 7 DAYS
+      }
+    );
 
-    const lambdaAuthorizer = new TokenAuthorizer(this, "rgbRestApiAuthorizer", {
-      handler: getAllUserApiKeysAuthorizerLambda,
-      authorizerName: "rgb-rest-api-token-authorizer",
-      identitySource: "method.request.header.Authorization",
-    });
+    const lambdaAuthorizer = new TokenAuthorizer(
+      this,
+      `${projectPrefix}-all-ApiKeys-Authorizer`,
+      {
+        handler: getAllUserApiKeysAuthorizerLambda,
+        authorizerName: `${projectPrefix}-rest-api-token-authorizer`,
+        identitySource: "method.request.header.Authorization",
+      }
+    );
 
     //get the rest api we created in the api stack
-    const rgbRestApi = RestApi.fromRestApiAttributes(this, "rgb-rest-api", {
-      restApiId: rgbRestApiId,
-      rootResourceId: rgbRestApiRootResourceId,
-    });
+    const rgbRestApi = RestApi.fromRestApiAttributes(
+      this,
+      `${projectPrefix}-rest-api`,
+      {
+        restApiId: rgbRestApiId,
+        rootResourceId: rgbRestApiRootResourceId,
+      }
+    );
 
     const v1Root = rgbRestApi.root.addResource("v1");
 
@@ -236,11 +276,10 @@ export class RgbSplittingStack extends cdk.Stack {
     const webHookEventsRoute = v1Root.addResource("webhook");
 
     //route to fetch all the api keys a user has
-    const allApiKeys = v1Root.addResource("keys");
-    const getUsersApiKeysRoute = allApiKeys.addResource("{userId}");
+    const getUsersApiKeysRoute = v1Root.addResource("keys");
 
     //route to request payments
-    const requestPayment = v1Root.addResource("trigger-payment");
+    const triggerChargeRoute = v1Root.addResource("trigger-payment");
 
     generatePresignedUrlRoute.addMethod(
       HttpMethod.POST,
@@ -264,7 +303,7 @@ export class RgbSplittingStack extends cdk.Stack {
       }
     );
 
-    requestPayment.addMethod(
+    triggerChargeRoute.addMethod(
       HttpMethod.POST,
       new LambdaIntegration(requestPaymentLambda)
     );
@@ -273,27 +312,22 @@ export class RgbSplittingStack extends cdk.Stack {
     //grant it permission to modify our usage plans
     webHookLambda.addToRolePolicy(
       new PolicyStatement({
-        actions: ["apigateway:POST", "apigateway:PATCH"],
-        resources: [
-          `arn:aws:apigateway:${region}::/apikeys`,
-          `arn:aws:apigateway:${region}::/usageplans/${freeTierUsagePlanId}`,
-          `arn:aws:apigateway:${region}::/usageplans/${proTierUsagePlanId}`,
-          `arn:aws:apigateway:${region}::/usageplans/${executiveTierUsagePlanId}`,
-          `arn:aws:apigateway:${region}::/usageplans/${freeTierUsagePlanId}/keys`,
-          `arn:aws:apigateway:${region}::/usageplans/${proTierUsagePlanId}/keys`,
-          `arn:aws:apigateway:${region}::/usageplans/${executiveTierUsagePlanId}/keys`,
+        actions: [
+          "apigateway:POST",
+          "apigateway:PATCH",
+          "secretsmanager:GetSecretValue",
         ],
-      })
-    );
-
-    //allow the webHookLambda to get the necessary secrets from secret manager
-    webHookLambda.addToRolePolicy(
-      new PolicyStatement({
-        actions: ["secretsmanager:GetSecretValue"],
         resources: [
-          `arn:aws:secretsmanager:us-east-1:266735801881:secret:RGB_PAYMENT_SECRET-XlWWaB`,
-          "arn:aws:secretsmanager:us-east-1:266735801881:secret:RGB_Splitting_Plans-5l3O6l",
-          "arn:aws:secretsmanager:us-east-1:266735801881:secret:RGB_WEBHOOK_SECRET-dZnzxj",
+          `arn:aws:apigateway:${this.region}::/apikeys`,
+          `arn:aws:apigateway:${this.region}::/usageplans/${freeTierUsagePlanId}`,
+          `arn:aws:apigateway:${this.region}::/usageplans/${proTierUsagePlanId}`,
+          `arn:aws:apigateway:${this.region}::/usageplans/${executiveTierUsagePlanId}`,
+          `arn:aws:apigateway:${this.region}::/usageplans/${freeTierUsagePlanId}/keys`,
+          `arn:aws:apigateway:${this.region}::/usageplans/${proTierUsagePlanId}/keys`,
+          `arn:aws:apigateway:${this.region}::/usageplans/${executiveTierUsagePlanId}/keys`,
+          `arn:aws:secretsmanager:${this.region}:${this.account}:secret:RGB_PAYMENT_SECRET*`,
+          `arn:aws:secretsmanager:${this.region}:${this.account}:secret:RGB_Splitting_Plans*`,
+          `arn:aws:secretsmanager:${this.region}:${this.account}:secret:RGB_WEBHOOK_SECRET*`,
         ],
       })
     );
@@ -317,6 +351,69 @@ export class RgbSplittingStack extends cdk.Stack {
       })
     );
 
+    resubscribeLambda.addToRolePolicy(
+      new PolicyStatement({
+        actions: [
+          "apigateway:POST",
+          "apigateway:PATCH",
+          "secretsmanager:GetSecretValue",
+        ],
+        resources: [
+          `arn:aws:apigateway:${this.region}::/apikeys`,
+          `arn:aws:apigateway:${this.region}::/usageplans/${freeTierUsagePlanId}`,
+          `arn:aws:apigateway:${this.region}::/usageplans/${proTierUsagePlanId}`,
+          `arn:aws:apigateway:${this.region}::/usageplans/${executiveTierUsagePlanId}`,
+          `arn:aws:apigateway:${this.region}::/usageplans/${freeTierUsagePlanId}/keys`,
+          `arn:aws:apigateway:${this.region}::/usageplans/${proTierUsagePlanId}/keys`,
+          `arn:aws:apigateway:${this.region}::/usageplans/${executiveTierUsagePlanId}/keys`,
+          `arn:aws:secretsmanager:${this.region}:${this.account}:secret:RGB_PAYMENT_SECRET*`,
+          `arn:aws:secretsmanager:${this.region}:${this.account}:secret:RGB_Splitting_Plans*`,
+        ],
+      })
+    );
+
+    const eventBridgeRole = new cdk.aws_iam.Role(
+      this,
+      `${projectPrefix}-resubscribe-event-role`,
+      {
+        roleName: `${projectPrefix}-resubscribe-event-role`,
+        description:
+          "This role allows eventbridge to trigger our resubscription lambda",
+        assumedBy: new cdk.aws_iam.ServicePrincipal("events.amazonaws.com"),
+      }
+    );
+
+    //allow eventbridge to trigger lambda function
+    eventBridgeRole.addToPolicy(
+      new cdk.aws_iam.PolicyStatement({
+        actions: ["lambda:InvokeFunction"],
+        resources: [resubscribeLambda.functionArn],
+      })
+    );
+
+    //this event bridge rule is used to cancel all expired subscriptions
+    //calls the cancel lambda every week
+    const eventBridgeTask = new EventBridgeSchedulerCreateScheduleTask(
+      this,
+      `${projectPrefix}-resubscribe-eventbridge-task`,
+      {
+        scheduleName: `${projectPrefix}-resubscribe-eventbridge-task`,
+        schedule: Schedule.rate(cdk.Duration.minutes(3)),
+        startDate: new Date(),
+        description:
+          "This rule runs every week to resubscribe all users whose subscribtions have expired to their plan",
+        flexibleTimeWindow: cdk.Duration.minutes(5),
+        target: new EventBridgeSchedulerTarget({
+          arn: resubscribeLambda.functionArn,
+          role: eventBridgeRole,
+          retryPolicy: {
+            maximumRetryAttempts: 3,
+            maximumEventAge: cdk.Duration.days(1),
+          },
+        }),
+      }
+    );
+
     s3Bucket.grantReadWrite(splittingLambda);
 
     s3Bucket.grantPut(generatePresignedUrlLambda);
@@ -328,6 +425,7 @@ export class RgbSplittingStack extends cdk.Stack {
     );
 
     usersTable.grantReadWriteData(webHookLambda);
+    usersTable.grantReadWriteData(resubscribeLambda);
 
     usersTable.grantWriteData(splittingLambda);
 

@@ -3,20 +3,12 @@ import { APIGatewayProxyEventV2, Handler } from "aws-lambda";
 
 import { v4 as uuid } from "uuid";
 
-import { PaymentPlansResponse } from "../types/paymentPlans";
-
-import {
-  newPaymentRequestBodyValidator,
-  usagePlanValidator,
-} from "../helpers/schemaValidator/validators";
+import { newPaymentRequestBodyValidator } from "../helpers/schemaValidator/validators";
+import { validatePlan } from "../helpers/fns/validatePlan";
 
 const region = process.env.REGION!;
 const paymentGatewaySecretName = process.env.PAYMENT_SECRET_NAME!;
 const availableUsagePlansSecretName = process.env.AVAILABLE_PLANS_SECRET_NAME!;
-
-const secretClient = new SecretsManager({
-  region,
-});
 
 export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
   const headers = {
@@ -43,108 +35,13 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
   }
 
   try {
-    //fetch the payment gateway secret and the available usage plans secret
-    const [paymentGatewaySecret, availableUsagePlans] = await Promise.all([
-      secretClient
-        .getSecretValue({ SecretId: paymentGatewaySecretName })
-        .promise(),
-      secretClient
-        .getSecretValue({ SecretId: availableUsagePlansSecretName })
-        .promise(),
-    ]);
-
-    if (!paymentGatewaySecret.SecretString) {
-      console.log("Payment gateway secret not found");
-
-      return {
-        statusCode: 500,
-        body: JSON.stringify({
-          message: "Internal Server Error",
-        }),
-        headers,
-      };
-    }
-
-    if (!availableUsagePlans.SecretString) {
-      console.log("failed to get  usage plans from secret storage");
-
-      return {
-        statusCode: 500,
-        body: JSON.stringify({
-          message: "Internal Server Error",
-        }),
-      };
-    }
-
-    //validate the usage plans received
-    const {
-      success,
-      error,
-      data: allUsagePlans,
-    } = usagePlanValidator.safeParse(
-      JSON.parse(availableUsagePlans.SecretString)
-    );
-
-    if (!success) {
-      console.log(error.issues, "error message");
-
-      return {
-        statusCode: 400,
-        body: JSON.stringify({ message: error.message }),
-      };
-    }
-
-    ///fetch all the plans set on the payment gateway
-    const url = `https://api.flutterwave.com/v3/payment-plans?status=active`;
-
-    const getAllPlansOnPaymentGatewayReq = await fetch(url, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${paymentGatewaySecret.SecretString}`,
-        "Content-Type": "application/json",
-        accept: "application/json",
-      },
-    });
-
-    if (!getAllPlansOnPaymentGatewayReq.ok) {
-      const res = await getAllPlansOnPaymentGatewayReq.json();
-
-      return {
-        statusCode: 500,
-        body: JSON.stringify({ message: "Internal Server Error" }),
-        headers,
-      };
-    }
-
-    const allPlansInPaymentGateway =
-      (await getAllPlansOnPaymentGatewayReq.json()) as PaymentPlansResponse;
-
-    //find the plan with th name the customer selected
-    const planDetails = allPlansInPaymentGateway.data.find(
-      (plan) => data.planName === plan.name.toLowerCase()
-    );
-
-    if (!planDetails) {
-      return {
-        statusCode: 400,
-        body: JSON.stringify({ message: "Plan not found" }),
-        headers,
-      };
-    }
-
-    if (!(data.planName in allUsagePlans)) {
-      console.log("Failed to find plan in available plans");
-
-      return {
-        statusCode: 500,
-        body: JSON.stringify({
-          message: "Internal Server Error",
-        }),
-      };
-    }
-
-    const chosenUsagePlan =
-      allUsagePlans[data.planName as keyof typeof allUsagePlans];
+    const { planDetails, chosenUsagePlan, paymentGatewaySecret } =
+      await validatePlan(
+        paymentGatewaySecretName,
+        availableUsagePlansSecretName,
+        data.planName,
+        region
+      );
 
     const paymentParams = {
       tx_ref: uuid(),
@@ -153,6 +50,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
       redirect_url: "http://localhost:3000/dashboard/new",
       customer: {
         email: data.email,
+        name: data?.fullName ? data.fullName : "",
       },
       customizations: {
         title: "Rgbreak",
@@ -171,7 +69,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     const paymentReq = await fetch("https://api.flutterwave.com/v3/payments", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${paymentGatewaySecret.SecretString}`,
+        Authorization: `Bearer ${paymentGatewaySecret}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify(paymentParams),
@@ -180,7 +78,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     if (!paymentReq.ok) {
       const res = await paymentReq.json();
 
-      console.log(res, "failed payment request response");
+      console.log("failed to initialize payment", res);
 
       return {
         statusCode: 500,
