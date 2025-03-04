@@ -18,7 +18,7 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export const handler: Handler = async () => {
   try {
-    //get all the users with subscriptions that are active but the nextPaymentDate is less than the current date
+    //get all the users with pro or exec subscriptions that are active & the nextPaymentDate is less than  or equal to the current date
     const usersReq = await dynamo.send(
       new QueryCommand({
         IndexName: "expiredSubscriptionIndex",
@@ -28,27 +28,30 @@ export const handler: Handler = async () => {
         ExpressionAttributeValues: {
           ":status": "active",
           ":currentDate": Date.now(),
+          ":excludedPlan": "free",
         },
+        FilterExpression: "currentPlan <> :excludedPlan",
         ProjectionExpression:
-          "nextPaymentDate, apiKeyInfo, id, email, userId, sub_status, cardTokenInfo, projectName",
+          "id, email, userId, projectName, nextPaymentDate, currentPlan, apiKeyInfo, cardTokenInfo",
       })
     );
 
     if (!usersReq.Items || !usersReq.Items.length) {
+      console.log("found no users with expired subscriptions");
+
       return;
     }
 
     const users = usersReq.Items as {
       id: string;
       email: string;
-      sub_status: string;
       userId: string;
-      nextPaymentDate: number;
       projectName: string;
+      nextPaymentDate: number;
+      currentPlan: string;
 
       apiKeyInfo: {
         apiKey: string;
-        currentPlan: string;
         usagePlanId: string;
       };
 
@@ -58,6 +61,9 @@ export const handler: Handler = async () => {
       };
     }[];
 
+    const failedPayments = [];
+
+    //we loop through each user & try to resubscribe them, max 2 attempts
     for (const user of users) {
       let attempts = 0;
       let chargeSuccessful = false;
@@ -68,12 +74,14 @@ export const handler: Handler = async () => {
             await validatePlan(
               paymentGatewaySecretName,
               availableUsagePlansSecretName,
-              user.apiKeyInfo.currentPlan,
+              user.currentPlan,
               region
             );
 
-          // Delay for 2 seconds
-          await delay(2000);
+          // Delay for 2 second before retrying
+          if (attempts > 0) {
+            await delay(2000);
+          }
 
           const chargeReq = await fetch(
             "https://api.flutterwave.com/v3/tokenized-charges",
@@ -89,9 +97,9 @@ export const handler: Handler = async () => {
                 meta: {
                   projectId: user.id,
                   userId: user.userId,
-                  planName: planDetails.name.toLowerCase().trim(),
                   usagePlanId: chosenUsagePlan,
                   projectName: user.projectName.toLowerCase().trim(),
+                  planName: planDetails.name.toLowerCase().trim(),
                 },
               }),
               headers: {
@@ -102,9 +110,9 @@ export const handler: Handler = async () => {
           );
 
           if (!chargeReq.ok) {
-            attempts++;
+            const errorMessage = await chargeReq.json();
 
-            continue;
+            throw new Error(errorMessage.message);
           }
 
           //user was successfully cahrged
@@ -114,19 +122,21 @@ export const handler: Handler = async () => {
 
           attempts++;
 
-          if (attempts >= 3) {
-            const cancelParams = {
-              TableName: tableName,
-              Key: { userId: user.userId },
-              UpdateExpression: "set sub_status = :cancelled",
-              ExpressionAttributeValues: {
-                ":cancelled": "cancelled",
-              },
-            };
+          if (attempts >= 2) {
+            failedPayments.push({
+              user,
+              error,
+            });
           }
         }
       }
     }
+
+    //TODO:  //after the for loop has finished, if there are failed payments, send them to the cancellation queue
+    // if (failedPayments.length) {
+    // }
+
+    return;
   } catch (error: unknown) {
     if (error instanceof Error) {
       console.log(error.message);

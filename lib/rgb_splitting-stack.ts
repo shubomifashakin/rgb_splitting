@@ -8,6 +8,7 @@ import { BlockPublicAccess, Bucket, EventType } from "aws-cdk-lib/aws-s3";
 import { NodejsFunction } from "aws-cdk-lib/aws-lambda-nodejs";
 import {
   AuthorizationType,
+  Cors,
   LambdaIntegration,
   RestApi,
   TokenAuthorizer,
@@ -23,6 +24,7 @@ import {
   EventBridgeSchedulerCreateScheduleTask,
   EventBridgeSchedulerTarget,
 } from "aws-cdk-lib/aws-stepfunctions-tasks";
+import { Queue } from "aws-cdk-lib/aws-sqs";
 
 dotenv.config();
 
@@ -167,7 +169,6 @@ export class RgbSplittingStack extends cdk.Stack {
           REGION: this.region,
           TABLE_NAME: usersTable.tableName,
           PAYMENT_SECRET_NAME: paymentSecretName,
-          AVAILABLE_PLANS_SECRET_NAME: availablePlansSecretName,
           WEBHOOK_SECRET_NAME: webhookSecretName,
         },
         timeout: cdk.Duration.seconds(20),
@@ -193,7 +194,7 @@ export class RgbSplittingStack extends cdk.Stack {
       }
     );
 
-    const requestPaymentLambda = new NodejsFunction(
+    const triggerChargeLambda = new NodejsFunction(
       this,
       `${projectPrefix}-Payments-Lambda`,
       {
@@ -211,13 +212,12 @@ export class RgbSplittingStack extends cdk.Stack {
       }
     );
 
-    const getAllUserApiKeysAuthorizerLambda = new NodejsFunction(
+    const userAuthorizerLambda = new NodejsFunction(
       this,
-      `${projectPrefix}-all-apiKeys-authorizer-lambda`,
+      `${projectPrefix}-user-authorizer-lambda`,
       {
-        functionName: `${projectPrefix}-all-apiKeys-authorizer-lambda`,
-        description:
-          "This lambda acts as an authorizer for the getAllUserApiKeysRoute",
+        functionName: `${projectPrefix}-user-authorizer-lambda`,
+        description: "This lambda validates the user",
         runtime: Runtime.NODEJS_22_X,
         entry: "./resources/authorizer-lambda-handler.ts",
         handler: "handler",
@@ -247,11 +247,11 @@ export class RgbSplittingStack extends cdk.Stack {
       }
     );
 
-    const lambdaAuthorizer = new TokenAuthorizer(
+    const userAuthorizer = new TokenAuthorizer(
       this,
-      `${projectPrefix}-all-ApiKeys-Authorizer`,
+      `${projectPrefix}-user-Authorizer`,
       {
-        handler: getAllUserApiKeysAuthorizerLambda,
+        handler: userAuthorizerLambda,
         authorizerName: `${projectPrefix}-rest-api-token-authorizer`,
         identitySource: "method.request.header.Authorization",
       }
@@ -281,6 +281,13 @@ export class RgbSplittingStack extends cdk.Stack {
     //route to request payments
     const triggerChargeRoute = v1Root.addResource("trigger-payment");
 
+    triggerChargeRoute.addCorsPreflight({
+      allowOrigins: Cors.ALL_ORIGINS,
+      allowMethods: ["OPTIONS", "POST"],
+      allowHeaders: ["Content-Type", "Authorization", "X-Api-Key", "x-api-key"],
+      statusCode: 200,
+    });
+
     generatePresignedUrlRoute.addMethod(
       HttpMethod.POST,
       new LambdaIntegration(generatePresignedUrlLambda),
@@ -298,14 +305,14 @@ export class RgbSplittingStack extends cdk.Stack {
       HttpMethod.GET,
       new LambdaIntegration(getUsersApiKeysLambda),
       {
-        authorizer: lambdaAuthorizer,
+        authorizer: userAuthorizer,
         authorizationType: AuthorizationType.CUSTOM,
       }
     );
 
     triggerChargeRoute.addMethod(
       HttpMethod.POST,
-      new LambdaIntegration(requestPaymentLambda)
+      new LambdaIntegration(triggerChargeLambda)
     );
 
     //grant the webhook Lambda permission to create new ApiKeys & fetch all our available keys
@@ -332,7 +339,7 @@ export class RgbSplittingStack extends cdk.Stack {
       })
     );
 
-    requestPaymentLambda.addToRolePolicy(
+    triggerChargeLambda.addToRolePolicy(
       new PolicyStatement({
         actions: ["secretsmanager:GetSecretValue"],
         resources: [
@@ -342,7 +349,7 @@ export class RgbSplittingStack extends cdk.Stack {
       })
     );
 
-    getAllUserApiKeysAuthorizerLambda.addToRolePolicy(
+    userAuthorizerLambda.addToRolePolicy(
       new PolicyStatement({
         actions: ["secretsmanager:GetSecretValue"],
         resources: [
@@ -407,12 +414,23 @@ export class RgbSplittingStack extends cdk.Stack {
           arn: resubscribeLambda.functionArn,
           role: eventBridgeRole,
           retryPolicy: {
-            maximumRetryAttempts: 3,
+            maximumRetryAttempts: 2,
             maximumEventAge: cdk.Duration.days(1),
           },
         }),
       }
     );
+
+    //resubscriptions that failed are sent to this queue so they can be downgraded to the free plan
+    // const cancelSubscriptionQueue = new Queue(
+    //   this,
+    //   `${projectPrefix}-cancel-subscription-queue`,
+    //   {
+    //     queueName: `${projectPrefix}-cancel-subscription-queue`,
+    //     retentionPeriod: cdk.Duration.days(7),
+    //     // visibilityTimeout: cdk.Duration.seconds(30),
+    //   }
+    // );
 
     s3Bucket.grantReadWrite(splittingLambda);
 

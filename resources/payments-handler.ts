@@ -1,4 +1,3 @@
-import { SecretsManager } from "aws-sdk";
 import { APIGatewayProxyEventV2, Handler } from "aws-lambda";
 
 import { v4 as uuid } from "uuid";
@@ -56,7 +55,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
         title: "Rgbreak",
       },
       meta: {
-        projectId: uuid(),
+        projectId: data.projectId ? data.projectId : uuid(),
         userId: data.userId,
         planName: data.planName,
         usagePlanId: chosenUsagePlan,

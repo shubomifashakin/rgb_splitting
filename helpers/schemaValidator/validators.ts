@@ -21,6 +21,8 @@ export const newPaymentRequestBodyValidator = z.object({
     .string()
     .optional()
     .transform((value) => value?.trim()),
+
+  projectId: z.string().uuid().optional(),
 });
 
 export const usagePlanValidator = z.object({

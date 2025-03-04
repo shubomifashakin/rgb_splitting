@@ -5,14 +5,13 @@ import {
   DynamoDBDocumentClient,
   PutCommand,
   UpdateCommand,
-  QueryCommand,
   GetCommand,
 } from "@aws-sdk/lib-dynamodb";
 
 import { v4 as uuid } from "uuid";
 
 import {
-  webHookEventSchema,
+  webHookEventValidator,
   ChargeCompletedData,
 } from "../types/webHookEventTypes";
 import { ChargeVerificationStatus } from "../types/chargeVerificationStatus";
@@ -42,6 +41,10 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     };
   }
 
+  const body = JSON.parse(event.body);
+
+  console.log(body);
+
   try {
     const [paymentGatewaySecret, webhookEventVerifierSecret] =
       await Promise.all([
@@ -67,10 +70,6 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
       };
     }
 
-    const body = JSON.parse(event.body);
-
-    console.log(body);
-
     if (
       webhookEventVerifierSecret.SecretString !== event.headers["verif-hash"]
     ) {
@@ -88,7 +87,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
       success,
       error,
       data: webHookEvent,
-    } = webHookEventSchema.safeParse(body);
+    } = webHookEventValidator.safeParse(body);
 
     if (!success) {
       console.log(error.issues, "WEBHOOK EVENT SCHEMA VALIDATION FAILED");
@@ -200,9 +199,9 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
               projectName: webHookEvent.meta_data.projectName,
               nextPaymentDate: Date.now(),
               createdAt: new Date(eventData.created_at).getTime(),
+              currentPlan: webHookEvent.meta_data.planName,
               apiKeyInfo: {
                 apiKey: apiKey.value,
-                currentPlan: webHookEvent.meta_data.planName,
                 usagePlanId: webHookEvent.meta_data.usagePlanId,
               },
               cardTokenInfo: {
@@ -220,10 +219,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
       }
 
       //if there is an existing project, update the next payment date
-
-      //check if their current usage plan is the same as the one provided in the webhook
-
-      //if it isnt, update the user to the correct usage plan
+      //if they changed their plan, update the usage plan
       if (
         existingProject.Item.apiKeyInfo.usagePlanId !==
         webHookEvent.meta_data.usagePlanId
@@ -263,20 +259,14 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
             userId: webHookEvent.meta_data.userId,
           },
           UpdateExpression:
-            "set nextPaymentDate = :currentTimestamp, apiKeyInfo.usagePlanId = :usagePlanId, apiKeyInfo.currentPlan = :planName",
+            "set nextPaymentDate = :currentTimestamp, apiKeyInfo.usagePlanId = :usagePlanId, currentPlan = :planName",
           ExpressionAttributeValues: {
-            ":currentTimestamp": Date.now(),
+            ":currentTimestamp": Date.now(), //TODO: CHANGE TO ONE MONTH FROM NOW
             ":usagePlanId": webHookEvent.meta_data.usagePlanId,
             ":planName": webHookEvent.meta_data.planName,
           },
         })
       );
-    }
-
-    if (
-      webHookEvent.event === "charge.completed" &&
-      webHookEvent.data.status !== "successful"
-    ) {
     }
 
     return {

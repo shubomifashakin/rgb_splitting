@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const webHookEventSchema = z.object({
+export const webHookEventValidator = z.object({
   event: z.enum(["charge.completed"]),
   data: z.object({}).passthrough(),
   meta_data: z.object({

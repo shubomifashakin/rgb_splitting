@@ -78,13 +78,14 @@ export async function validatePlan(
   const allPlansInPaymentGateway =
     (await getAllPlansOnPaymentGatewayReq.json()) as PaymentPlansResponse;
 
-  console.log(allPlansInPaymentGateway);
   //find the plan with th name the customer selected
   const planDetails = allPlansInPaymentGateway.data.find(
     (plan) => trimmedPlanName === plan.name.toLowerCase().trim()
   );
-  console.log(planDetails, allUsagePlans);
+
   if (!planDetails || !(trimmedPlanName in allUsagePlans)) {
+    console.log(planDetails, allUsagePlans);
+
     throw new Error("Failed to find plan in available plans");
   }
 
