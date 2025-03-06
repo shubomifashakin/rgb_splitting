@@ -20,6 +20,7 @@ import { getOneMonthFromNow } from "../helpers/fns/oneMonthFromNow";
 
 const region = process.env.REGION;
 const tableName = process.env.TABLE_NAME;
+const paymentGatewayUrl = process.env.PAYMENT_GATEWAY_URL!;
 const paymentGatewaySecretName = process.env.PAYMENT_SECRET_NAME!;
 const webhookEventVerifierSecretName = process.env.WEBHOOK_SECRET_NAME!;
 
@@ -43,7 +44,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
 
   const body = JSON.parse(event.body);
 
-  console.log(body);
+  console.error(body);
 
   try {
     const [paymentGatewaySecret, webhookEventVerifierSecret] =
@@ -60,7 +61,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
       !paymentGatewaySecret.SecretString ||
       !webhookEventVerifierSecret.SecretString
     ) {
-      console.log("Payment or Webhook secret is empty");
+      console.error("Payment or Webhook secret is empty");
 
       return {
         statusCode: 500,
@@ -73,7 +74,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     if (
       webhookEventVerifierSecret.SecretString !== event.headers["verif-hash"]
     ) {
-      console.log("Signature does not match");
+      console.error("Signature does not match");
 
       return {
         statusCode: 400,
@@ -90,7 +91,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     } = webHookEventValidator.safeParse(body);
 
     if (!success) {
-      console.log(error.issues, "WEBHOOK EVENT SCHEMA VALIDATION FAILED");
+      console.error(error.issues, "WEBHOOK EVENT SCHEMA VALIDATION FAILED");
 
       return {
         statusCode: 400,
@@ -108,20 +109,19 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     ) {
       const eventData = webHookEvent.data as unknown as ChargeCompletedData;
 
-      const chargeVerificationReq = await fetch(
-        `https://api.flutterwave.com/v3/transactions/${eventData.id}/verify`,
-        {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${paymentGatewaySecret.SecretString}`,
-          },
-        }
-      );
+      const url = `${paymentGatewayUrl}/transactions/${eventData.id}/verify`;
+
+      const chargeVerificationReq = await fetch(url, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${paymentGatewaySecret.SecretString}`,
+        },
+      });
 
       if (!chargeVerificationReq.ok) {
         const failureReason = await chargeVerificationReq.json();
 
-        console.log(failureReason, "Failed to verify charge");
+        console.error("Failed to verify charge", failureReason);
 
         return {
           statusCode: 400,
@@ -135,7 +135,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
         (await chargeVerificationReq.json()) as ChargeVerificationStatus;
 
       if (chargeVerificationRes.data.status !== "successful") {
-        console.log("Payment not successful");
+        console.error("Payment not successful");
 
         return {
           statusCode: 400,
@@ -169,7 +169,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
           .promise();
 
         if (!apiKey.id || !apiKey.value) {
-          console.log("Failed to create api key");
+          console.error("Failed to create api key");
 
           return {
             statusCode: 500,
@@ -201,6 +201,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
               createdAt: new Date(eventData.created_at).getTime(),
               currentPlan: webHookEvent.meta_data.planName,
               apiKeyInfo: {
+                apiKeyId: apiKey.id,
                 apiKey: apiKey.value,
                 usagePlanId: webHookEvent.meta_data.usagePlanId,
               },
@@ -224,20 +225,12 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
         existingProject.Item.apiKeyInfo.usagePlanId !==
         webHookEvent.meta_data.usagePlanId
       ) {
-        const apiKey = await apiGateway
-          .getApiKey({ apiKey: existingProject.Item.apiKeyInfo.apiKey })
-          .promise();
-
-        if (!apiKey.id || !apiKey.value) {
-          throw new Error("Failed to get api key");
-        }
-
         //CANT RUN IN PARALLEl BECAUSE AN APIKEY CAN ONLY BELONG TO 1 USAGE PLAN AT A TIME
         //remove the user from the old usage plan
         await apiGateway
           .deleteUsagePlanKey({
             usagePlanId: existingProject.Item.apiKeyInfo.usagePlanId,
-            keyId: apiKey.id,
+            keyId: existingProject.Item.apiKeyInfo.apiKeyId,
           })
           .promise();
 
@@ -245,7 +238,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
         await apiGateway
           .createUsagePlanKey({
             usagePlanId: webHookEvent.meta_data.usagePlanId,
-            keyId: apiKey.id,
+            keyId: existingProject.Item.apiKeyInfo.apiKeyId,
             keyType: "API_KEY",
           })
           .promise();
@@ -274,7 +267,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
       body: JSON.stringify({ message: "Api key generated" }),
     };
   } catch (error: unknown) {
-    console.log(error);
+    console.error(error);
 
     return {
       statusCode: 500,

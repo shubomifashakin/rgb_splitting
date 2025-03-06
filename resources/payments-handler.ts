@@ -6,8 +6,9 @@ import { newPaymentRequestBodyValidator } from "../helpers/schemaValidator/valid
 import { validatePlan } from "../helpers/fns/validatePlan";
 
 const region = process.env.REGION!;
+const paymentGatewayUrl = process.env.PAYMENT_GATEWAY_URL!;
 const paymentGatewaySecretName = process.env.PAYMENT_SECRET_NAME!;
-const availableUsagePlansSecretName = process.env.AVAILABLE_PLANS_SECRET_NAME!;
+const usagePlanSecretName = process.env.AVAILABLE_PLANS_SECRET_NAME!;
 
 export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
   const headers = {
@@ -32,15 +33,17 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
   if (!success) {
     return { statusCode: 400, body: JSON.stringify(error.issues), headers };
   }
+  console.log(data);
 
   try {
     const { planDetails, chosenUsagePlan, paymentGatewaySecret } =
-      await validatePlan(
+      await validatePlan({
         paymentGatewaySecretName,
-        availableUsagePlansSecretName,
-        data.planName,
-        region
-      );
+        usagePlanSecretName,
+        planName: data.planName,
+        region,
+        paymentGatewayUrl,
+      });
 
     const paymentParams = {
       tx_ref: uuid(),
@@ -64,8 +67,10 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
       payment_options: "card",
     };
 
+    console.log(paymentParams);
+
     //trigger a payment
-    const paymentReq = await fetch("https://api.flutterwave.com/v3/payments", {
+    const paymentReq = await fetch(`${paymentGatewayUrl}/payments`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${paymentGatewaySecret}`,
@@ -77,7 +82,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     if (!paymentReq.ok) {
       const res = await paymentReq.json();
 
-      console.log("failed to initialize payment", res);
+      console.error("failed to initialize payment", res);
 
       return {
         statusCode: 500,
@@ -94,7 +99,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
       headers,
     };
   } catch (error: unknown) {
-    console.log(error);
+    console.error(error, "HELLO WORLD");
 
     return {
       statusCode: 500,

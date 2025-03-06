@@ -13,12 +13,19 @@ import { usagePlanValidator } from "../schemaValidator/validators";
  * @throws Error if the request to the payment gateway fails.
  */
 
-export async function validatePlan(
-  paymentGatewaySecretName: string,
-  usagePlanSecretName: string,
-  planName: string,
-  region: string
-): Promise<{
+export async function validatePlan({
+  paymentGatewaySecretName,
+  usagePlanSecretName,
+  planName,
+  region,
+  paymentGatewayUrl,
+}: {
+  paymentGatewaySecretName: string;
+  usagePlanSecretName: string;
+  planName: string;
+  region: string;
+  paymentGatewayUrl: string;
+}): Promise<{
   planDetails: PaymentPlan;
   chosenUsagePlan: string;
   paymentGatewaySecret: string;
@@ -43,20 +50,20 @@ export async function validatePlan(
     );
   }
 
+  const trimmedAvailablePlans = JSON.parse(availableUsagePlans.SecretString!);
+
   //validate the usage plans received
   const {
     success,
     error,
     data: allUsagePlans,
-  } = usagePlanValidator.safeParse(
-    JSON.parse(availableUsagePlans.SecretString)
-  );
+  } = usagePlanValidator.safeParse(trimmedAvailablePlans);
 
   if (!success) {
     throw new Error(error.message);
   }
 
-  const url = `https://api.flutterwave.com/v3/payment-plans?status=active`;
+  const url = `${paymentGatewayUrl}/payment-plans?status=active`;
 
   const getAllPlansOnPaymentGatewayReq = await fetch(url, {
     method: "GET",

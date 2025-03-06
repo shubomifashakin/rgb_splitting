@@ -1,25 +1,28 @@
+import { SQS } from "aws-sdk";
 import { Handler } from "aws-lambda";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
 
-import { v4 as uuid } from "uuid";
 import { validatePlan } from "../helpers/fns/validatePlan";
+import { ExpiredProject } from "../types/expiredSubscriptionProjectInfo";
 
 const region = process.env.REGION!;
 const tableName = process.env.TABLE_NAME!;
+const cancelSubscriptionQueueUrl = process.env.QUEUE_URL!;
+const paymentGatewayUrl = process.env.PAYMENT_GATEWAY_URL!;
 const paymentGatewaySecretName = process.env.PAYMENT_SECRET_NAME!;
-const availableUsagePlansSecretName = process.env.AVAILABLE_PLANS_SECRET_NAME!;
+const usagePlanSecretName = process.env.AVAILABLE_PLANS_SECRET_NAME!;
 
 const client = new DynamoDBClient({ region });
 
 const dynamo = DynamoDBDocumentClient.from(client);
 
-const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const sqsQueue = new SQS({ apiVersion: "latest" });
 
 export const handler: Handler = async () => {
   try {
-    //get all the users with pro or exec subscriptions that are active & the nextPaymentDate is less than  or equal to the current date
-    const usersReq = await dynamo.send(
+    //get all the projects with pro or exec subscriptions that are active & the nextPaymentDate is less than  or equal to the current date
+    const projectsReq = await dynamo.send(
       new QueryCommand({
         IndexName: "expiredSubscriptionIndex",
         TableName: tableName,
@@ -36,69 +39,47 @@ export const handler: Handler = async () => {
       })
     );
 
-    if (!usersReq.Items || !usersReq.Items.length) {
-      console.log("found no users with expired subscriptions");
+    if (!projectsReq.Items || !projectsReq.Items.length) {
+      console.log("found no projects with expired subscriptions");
 
       return;
     }
 
-    const users = usersReq.Items as {
-      id: string;
-      email: string;
-      userId: string;
-      projectName: string;
-      nextPaymentDate: number;
-      currentPlan: string;
+    const projects = projectsReq.Items as ExpiredProject[];
 
-      apiKeyInfo: {
-        apiKey: string;
-        usagePlanId: string;
-      };
-
-      cardTokenInfo: {
-        token: string;
-        expiry: string;
-      };
-    }[];
-
-    const failedPayments = [];
+    console.log(projects);
 
     //we loop through each user & try to resubscribe them, max 2 attempts
-    for (const user of users) {
+    for (const project of projects) {
       let attempts = 0;
-      let chargeSuccessful = false;
 
-      while (!chargeSuccessful && attempts < 2) {
+      while (attempts < 2) {
         try {
           const { planDetails, chosenUsagePlan, paymentGatewaySecret } =
-            await validatePlan(
+            await validatePlan({
               paymentGatewaySecretName,
-              availableUsagePlansSecretName,
-              user.currentPlan,
-              region
-            );
-
-          // Delay for 2 second before retrying
-          if (attempts > 0) {
-            await delay(2000);
-          }
+              usagePlanSecretName,
+              planName: project.currentPlan,
+              region,
+              paymentGatewayUrl,
+            });
 
           const chargeReq = await fetch(
-            "https://api.flutterwave.com/v3/tokenized-charges",
+            `${paymentGatewayUrl}/tokenized-charges`,
             {
               method: "POST",
               body: JSON.stringify({
-                token: user.cardTokenInfo.token,
-                email: user.email,
+                token: project.cardTokenInfo.token,
+                email: project.email,
                 currency: planDetails.currency,
                 countryCode: "NG",
                 amount: planDetails.amount,
-                tx_ref: uuid(),
+                tx_ref: `${project.id}-${project.nextPaymentDate}`,
                 meta: {
-                  projectId: user.id,
-                  userId: user.userId,
+                  projectId: project.id,
+                  userId: project.userId,
                   usagePlanId: chosenUsagePlan,
-                  projectName: user.projectName.toLowerCase().trim(),
+                  projectName: project.projectName.toLowerCase().trim(),
                   planName: planDetails.name.toLowerCase().trim(),
                 },
               }),
@@ -112,38 +93,65 @@ export const handler: Handler = async () => {
           if (!chargeReq.ok) {
             const errorMessage = await chargeReq.json();
 
-            throw new Error(errorMessage.message);
+            //only retry for server/netwrk errors
+            if (chargeReq.status >= 500) {
+              throw new Error(errorMessage.message);
+            }
+
+            await sqsQueue
+              .sendMessage({
+                MessageBody: JSON.stringify(project),
+                QueueUrl: cancelSubscriptionQueueUrl,
+              })
+              .promise()
+              .catch((error: unknown) => {
+                console.error(
+                  "ERROR: Failed to send project with expired subscription to queue",
+                  error,
+                  project
+                );
+              });
+
+            break;
           }
 
-          //user was successfully cahrged
-          chargeSuccessful = true;
+          //user was successfully charged
+          break;
         } catch (error: unknown) {
-          console.log(`Error charging user: ${user.email}`, error);
+          console.error(`Error charging user: ${project.email}`, error);
 
           attempts++;
 
           if (attempts >= 2) {
-            failedPayments.push({
-              user,
-              error,
-            });
+            await sqsQueue
+              .sendMessage({
+                MessageBody: JSON.stringify(project),
+                QueueUrl: cancelSubscriptionQueueUrl,
+              })
+              .promise()
+              .catch((error: unknown) => {
+                console.error(
+                  "ERROR: Failed to send project with expired subscription to queue",
+                  error,
+                  project
+                );
+              });
           }
         }
       }
     }
 
-    //TODO:  //after the for loop has finished, if there are failed payments, send them to the cancellation queue
-    // if (failedPayments.length) {
-    // }
-
     return;
   } catch (error: unknown) {
+    //this would only catch errors caused when the initial fetch for all expired subs fails
+    //throw the error so they can be caught by the alarm
     if (error instanceof Error) {
-      console.log(error.message);
+      console.error(error.message);
 
-      return;
+      throw error;
     }
 
-    console.log("FAILED TO  RESUBSCRIBE", error);
+    console.error("ERROR: FAILED TO HANDLE RESUBSCRIBTION PROCESS", error);
+    throw error;
   }
 };
