@@ -78,12 +78,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     ) {
       console.error("Payment or Webhook secret is empty");
 
-      return {
-        statusCode: 500,
-        body: JSON.stringify({
-          message: "Internal Server Error",
-        }),
-      };
+      throw new Error("Payment or Webhook secret is empty");
     }
 
     if (
@@ -108,12 +103,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     if (!success) {
       console.error(error.issues, "WEBHOOK EVENT SCHEMA VALIDATION FAILED");
 
-      return {
-        statusCode: 400,
-        body: JSON.stringify({
-          message: error.issues,
-        }),
-      };
+      throw new Error("WEBHOOK EVENT SCHEMA VALIDATION FAILED");
     }
 
     if (
@@ -136,12 +126,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
 
         console.error("Failed to verify charge", failureReason);
 
-        return {
-          statusCode: 400,
-          body: JSON.stringify({
-            message: "Failed to confirm payment",
-          }),
-        };
+        throw new Error("Failed to verify payment");
       }
 
       const chargeVerificationRes =
@@ -184,12 +169,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
         if (!apiKey.id || !apiKey.value) {
           console.error("Failed to create api key");
 
-          return {
-            statusCode: 500,
-            body: JSON.stringify({
-              message: "Internal server error - failed to create api key",
-            }),
-          };
+          throw new Error("Internal server error - failed to create api key");
         }
 
         //add the apikey generated to the usage plan
@@ -210,7 +190,8 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
               id: webHookEvent.meta_data.projectId,
               userId: webHookEvent.meta_data.userId,
               projectName: webHookEvent.meta_data.projectName,
-              nextPaymentDate: Date.now(),
+              nextPaymentDate: getOneMonthFromNow(), //TODO: CHANGE TO ONE MONTH FROM NOW
+              currentBillingDate: new Date(eventData.created_at).getTime(),
               createdAt: new Date(eventData.created_at).getTime(),
               currentPlan: webHookEvent.meta_data.planName,
               apiKeyInfo: {
@@ -265,9 +246,10 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
             userId: webHookEvent.meta_data.userId,
           },
           UpdateExpression:
-            "set nextPaymentDate = :currentTimestamp, apiKeyInfo.usagePlanId = :usagePlanId, currentPlan = :planName",
+            "set nextPaymentDate = :currentTimestamp, currentBillingDate = :currentBillingDate, apiKeyInfo.usagePlanId = :usagePlanId, currentPlan = :planName",
           ExpressionAttributeValues: {
-            ":currentTimestamp": Date.now(), //TODO: CHANGE TO ONE MONTH FROM NOW
+            ":currentTimestamp": getOneMonthFromNow(), //TODO: CHANGE TO ONE MONTH FROM NOW
+            ":currentBillingDate": new Date(eventData.created_at).getTime(),
             ":usagePlanId": webHookEvent.meta_data.usagePlanId,
             ":planName": webHookEvent.meta_data.planName,
           },
@@ -282,9 +264,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
   } catch (error: unknown) {
     console.error(error);
 
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ message: "Internal server error" }),
-    };
+    //let it be caught by the alarm
+    throw error;
   }
 };

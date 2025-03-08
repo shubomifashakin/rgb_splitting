@@ -1,4 +1,4 @@
-import { Handler } from "aws-lambda";
+import { Handler, SQSEvent } from "aws-lambda";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
@@ -8,10 +8,11 @@ import { ExpiredProject } from "../types/expiredSubscriptionProjectInfo";
 
 const region = process.env.REGION!;
 const tableName = process.env.TABLE_NAME!;
-const cancelSubscriptionQueueUrl = process.env.QUEUE_URL!;
 const paymentGatewayUrl = process.env.PAYMENT_GATEWAY_URL!;
 const paymentGatewaySecretName = process.env.PAYMENT_SECRET_NAME!;
 const usagePlanSecretName = process.env.AVAILABLE_PLANS_SECRET_NAME!;
+const resubscribeQueueUrl = process.env.RESUBSCRIBE_QUEUE_URL!;
+const cancelSubscriptionQueueUrl = process.env.CANCEL_SUBSCRIPTION_QUEUE_URL!;
 
 const client = new DynamoDBClient({ region });
 
@@ -19,7 +20,20 @@ const dynamo = DynamoDBDocumentClient.from(client);
 
 const sqsQueue = new SQSClient({ apiVersion: "latest" });
 
-export const handler: Handler = async () => {
+export const handler: Handler = async (event: SQSEvent | null) => {
+  console.log("event", event);
+
+  //this is the last evaluated key from the previous batch if this was a queue triggered invocation
+  //if it wasnt, it will be undefined
+  const cursor =
+    event && event?.Records?.[0]?.body
+      ? JSON.parse(event.Records[0].body)
+      : undefined;
+
+  console.log("STARTING CURSOR", cursor);
+
+  const batchLimit = 5000;
+
   try {
     //get all the projects with pro or exec subscriptions that are active & the nextPaymentDate is less than  or equal to the current date
     const projectsReq = await dynamo.send(
@@ -36,18 +50,25 @@ export const handler: Handler = async () => {
         FilterExpression: "currentPlan <> :excludedPlan",
         ProjectionExpression:
           "id, email, userId, projectName, nextPaymentDate, currentPlan, apiKeyInfo, cardTokenInfo",
+        Limit: batchLimit,
+        ExclusiveStartKey: cursor,
       })
     );
 
-    if (!projectsReq.Items || !projectsReq.Items.length) {
+    //if there are no project items and theres also no next batch, exit
+    if (
+      (!projectsReq.Items || !projectsReq.Items.length) &&
+      !projectsReq.LastEvaluatedKey
+    ) {
       console.log("found no projects with expired subscriptions");
 
       return;
     }
 
+    //the expired projects to be processed
     const projects = projectsReq.Items as ExpiredProject[];
 
-    console.log(projects);
+    console.log("EXPIRED PROJECTS", projects);
 
     //we loop through each user & try to resubscribe them, max 2 attempts
     for (const project of projects) {
@@ -143,9 +164,30 @@ export const handler: Handler = async () => {
       }
     }
 
+    console.log("NEXT CURSOR", projectsReq.LastEvaluatedKey);
+
+    //if there are more projects to process, send them to the queue -- THIS IS TRUE IF THERE IS A LAST EVALUATEDKEY RETURNED
+
+    //*** EXPLANATORY NOTE */
+    //if the lambda fails at this point, when the last batch has been processed but we have a next batch
+    //it would try again, but this time we would actually process the new batch, since the previous batch has been taken care of by the webhook
+    //they would actually be excluded from the query because they no longer satisfy the expired condition, acutally giving us the next batch of users to process on retry.
+    //this way, no 2 users get processed twice. plus the payments are idempotent so we actually wouldnt double charge them
+
+    //if it keeps failing at this point, at some point during the retries it may have already even completed processing all the users
+    //and then there would be no next batch, it wouldnt then have anything to send to the queue again, then marking it as successfu and discarding it from the queue
+    if (projectsReq.LastEvaluatedKey) {
+      await sqsQueue.send(
+        new SendMessageCommand({
+          MessageBody: JSON.stringify(projectsReq.LastEvaluatedKey),
+          QueueUrl: resubscribeQueueUrl,
+        })
+      );
+    }
+
     return;
   } catch (error: unknown) {
-    //this would only catch errors caused when the initial fetch for all expired subs fails
+    //this would only catch errors caused when the initial fetch for all expired subs fails or when the sqs send fails
     //throw the error so they can be caught by the alarm
     if (error instanceof Error) {
       console.error(error.message);
@@ -154,6 +196,7 @@ export const handler: Handler = async () => {
     }
 
     console.error("ERROR: FAILED TO HANDLE RESUBSCRIBTION PROCESS", error);
+
     throw error;
   }
 };

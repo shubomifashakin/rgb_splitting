@@ -97,7 +97,8 @@ export class RgbSplittingStack extends cdk.Stack {
       },
     });
 
-    const deadLetterQueue = new Queue(
+    //this queue is used to store messages that failed to be downgraded
+    const cancelSubscriptionDeadLetterQueue = new Queue(
       this,
       `${projectPrefix}-cancel-subscription-dlq`,
       {
@@ -113,10 +114,35 @@ export class RgbSplittingStack extends cdk.Stack {
       {
         queueName: `${projectPrefix}-cancel-subscription-queue`,
         retentionPeriod: cdk.Duration.days(4),
-        visibilityTimeout: cdk.Duration.minutes(1),
+        visibilityTimeout: cdk.Duration.minutes(1.2),
         deadLetterQueue: {
-          queue: deadLetterQueue,
           maxReceiveCount: 2,
+          queue: cancelSubscriptionDeadLetterQueue,
+        },
+        deliveryDelay: cdk.Duration.seconds(20),
+        receiveMessageWaitTime: cdk.Duration.seconds(20),
+      }
+    );
+
+    const resubscriptionDeadLetterQueue = new Queue(
+      this,
+      `${projectPrefix}-resubscription-dlq`,
+      {
+        queueName: `${projectPrefix}-resubscription-dlq`,
+        retentionPeriod: cdk.Duration.days(14),
+      }
+    );
+
+    const resubscribeSubscriptionQueue = new Queue(
+      this,
+      `${projectPrefix}-resubscribe-subscription-queue`,
+      {
+        queueName: `${projectPrefix}-resubscribe-subscription-queue`,
+        retentionPeriod: cdk.Duration.days(4),
+        visibilityTimeout: cdk.Duration.minutes(3),
+        deadLetterQueue: {
+          maxReceiveCount: 2,
+          queue: resubscriptionDeadLetterQueue,
         },
         deliveryDelay: cdk.Duration.seconds(20),
         receiveMessageWaitTime: cdk.Duration.seconds(20),
@@ -268,16 +294,17 @@ export class RgbSplittingStack extends cdk.Stack {
           TABLE_NAME: usersTable.tableName,
           PAYMENT_GATEWAY_URL: paymentGatewayUrl,
           PAYMENT_SECRET_NAME: paymentSecretName,
-          QUEUE_URL: cancelSubscriptionQueue.queueUrl,
           AVAILABLE_PLANS_SECRET_NAME: availablePlansSecretName,
+          RESUBSCRIBE_QUEUE_URL: resubscribeSubscriptionQueue.queueUrl,
+          CANCEL_SUBSCRIPTION_QUEUE_URL: cancelSubscriptionQueue.queueUrl,
         },
-        timeout: cdk.Duration.minutes(2), //TODO: CHANGE TO 7 DAYS
+        timeout: cdk.Duration.minutes(2),
       }
     );
 
     const cancelSubscriptionLambda = new NodejsFunction(
       this,
-      "${projectPrefix}-cancel-subscription-queue-lambda",
+      `${projectPrefix}-cancel-subscription-queue-lambda`,
       {
         functionName: `${projectPrefix}-cancel-subscription-queue-lambda`,
         description:
@@ -290,12 +317,19 @@ export class RgbSplittingStack extends cdk.Stack {
           TABLE_NAME: usersTable.tableName,
           AVAILABLE_PLANS_SECRET_NAME: availablePlansSecretName,
         },
-        timeout: cdk.Duration.seconds(30),
+        timeout: cdk.Duration.seconds(45),
       }
     );
 
+    resubscribeLambda.addEventSource(
+      new SqsEventSource(resubscribeSubscriptionQueue, { batchSize: 10 })
+    );
+
     cancelSubscriptionLambda.addEventSource(
-      new SqsEventSource(cancelSubscriptionQueue, { batchSize: 10 })
+      new SqsEventSource(cancelSubscriptionQueue, {
+        batchSize: 10,
+        reportBatchItemFailures: true,
+      })
     );
 
     const snsTopic = new cdk.aws_sns.Topic(this, `${projectPrefix}-sns-topic`, {
@@ -307,13 +341,14 @@ export class RgbSplittingStack extends cdk.Stack {
       new cdk.aws_sns_subscriptions.EmailSubscription(alarmSubscriptionEmail)
     );
 
+    //this alarm is triggered if the resubscribe lambda fails 2 times in 10 minutes
     const resubscribeErrorAlarm = new cdk.aws_cloudwatch.Alarm(
       this,
       `${projectPrefix}-resubscribe-errors-alarm`,
       {
         metric: resubscribeLambda.metricErrors({
           period: cdk.Duration.minutes(10),
-          statistic: "SUM",
+          statistic: "sum",
         }),
         evaluationPeriods: 1,
         threshold: 2,
@@ -327,21 +362,70 @@ export class RgbSplittingStack extends cdk.Stack {
       }
     );
 
-    const deadLetterQueueAlarm = new cdk.aws_cloudwatch.Alarm(
+    //this alarm is triggered if the webhook lambda fails 1 time in 10 minutes
+    const webHookErrorAlarm = new cdk.aws_cloudwatch.Alarm(
       this,
-      `${projectPrefix}-dead-letter-queue-alarm`,
+      `${projectPrefix}-webhook-errors-alarm`,
       {
-        metric: deadLetterQueue.metricApproximateNumberOfMessagesVisible({
-          statistic: "MAX",
+        metric: webHookLambda.metricErrors({
+          period: cdk.Duration.minutes(10),
+          statistic: "sum",
         }),
-        evaluationPeriods: 1,
         threshold: 1,
+        evaluationPeriods: 1,
         comparisonOperator:
           cdk.aws_cloudwatch.ComparisonOperator
             .GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
         actionsEnabled: true,
-        alarmName: `${projectPrefix}-dead-letter-queue-alarm`.toUpperCase(),
+        alarmName: `${projectPrefix}-webhook-alarm`.toUpperCase(),
+        alarmDescription:
+          "The lambda for handling webhooks does not function as expected",
+      }
+    );
+
+    //this alarm is triggered if there are messages in the cancel subscription dead letter queue
+    const cancelSubscriptionDLQAlarm = new cdk.aws_cloudwatch.Alarm(
+      this,
+      `${projectPrefix}-cancel-subscription-dlq-alarm`,
+      {
+        metric:
+          cancelSubscriptionDeadLetterQueue.metricApproximateNumberOfMessagesVisible(
+            {
+              statistic: "sum",
+            }
+          ),
+        evaluationPeriods: 1,
+        threshold: 2,
+        comparisonOperator:
+          cdk.aws_cloudwatch.ComparisonOperator
+            .GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+        actionsEnabled: true,
+        alarmName:
+          `${projectPrefix}-cancel-subscription-dlq-alarm`.toUpperCase(),
         alarmDescription: "There are messages in the dead letter queue",
+      }
+    );
+
+    //this alarm is triggered if there are messages in the resubscription dead letter queue
+    const resubscriptionDLQAlarm = new cdk.aws_cloudwatch.Alarm(
+      this,
+      `${projectPrefix}-resubscription-dlq-alarm`,
+      {
+        metric:
+          resubscriptionDeadLetterQueue.metricApproximateNumberOfMessagesVisible(
+            {
+              statistic: "sum",
+            }
+          ),
+        evaluationPeriods: 1,
+        threshold: 2,
+        comparisonOperator:
+          cdk.aws_cloudwatch.ComparisonOperator
+            .GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+        actionsEnabled: true,
+        alarmName: `${projectPrefix}-resubscription-dlq-alarm`.toUpperCase(),
+        alarmDescription:
+          "There are messages in the resubscription dead letter queue",
       }
     );
 
@@ -349,7 +433,15 @@ export class RgbSplittingStack extends cdk.Stack {
       new cdk.aws_cloudwatch_actions.SnsAction(snsTopic)
     );
 
-    deadLetterQueueAlarm.addAlarmAction(
+    webHookErrorAlarm.addAlarmAction(
+      new cdk.aws_cloudwatch_actions.SnsAction(snsTopic)
+    );
+
+    cancelSubscriptionDLQAlarm.addAlarmAction(
+      new cdk.aws_cloudwatch_actions.SnsAction(snsTopic)
+    );
+
+    resubscriptionDLQAlarm.addAlarmAction(
       new cdk.aws_cloudwatch_actions.SnsAction(snsTopic)
     );
 
@@ -508,22 +600,14 @@ export class RgbSplittingStack extends cdk.Stack {
     //construct the prod stage ARN
     const prodStageArn = `arn:aws:execute-api:${cdk.Stack.of(this).region}:${
       cdk.Stack.of(this).account
-    }:${rgbRestApi.restApiId}/prod/*/*`;
+    }:${rgbRestApi.restApiId}/prod`;
 
     //alow the prod stage invoke our lambdas
-    splittingLambda.addPermission(
-      `${projectPrefix}-allow-prod-stage-permission`,
-      {
-        principal: new ServicePrincipal("apigateway.amazonaws.com"),
-        sourceArn: prodStageArn,
-      }
-    );
-
     generatePresignedUrlLambda.addPermission(
       `${projectPrefix}-allow-prod-stage-permission`,
       {
         principal: new ServicePrincipal("apigateway.amazonaws.com"),
-        sourceArn: prodStageArn,
+        sourceArn: `${prodStageArn}/POST/v1/process`,
       }
     );
 
@@ -531,7 +615,7 @@ export class RgbSplittingStack extends cdk.Stack {
       `${projectPrefix}-allow-prod-stage-permission`,
       {
         principal: new ServicePrincipal("apigateway.amazonaws.com"),
-        sourceArn: prodStageArn,
+        sourceArn: `${prodStageArn}/POST/v1/webhook`,
       }
     );
 
@@ -539,7 +623,7 @@ export class RgbSplittingStack extends cdk.Stack {
       `${projectPrefix}-allow-prod-stage-permission`,
       {
         principal: new ServicePrincipal("apigateway.amazonaws.com"),
-        sourceArn: prodStageArn,
+        sourceArn: `${prodStageArn}/GET/v1/keys`,
       }
     );
 
@@ -547,15 +631,7 @@ export class RgbSplittingStack extends cdk.Stack {
       `${projectPrefix}-allow-prod-stage-permission`,
       {
         principal: new ServicePrincipal("apigateway.amazonaws.com"),
-        sourceArn: prodStageArn,
-      }
-    );
-
-    resubscribeLambda.addPermission(
-      `${projectPrefix}-allow-prod-stage-permission`,
-      {
-        principal: new ServicePrincipal("apigateway.amazonaws.com"),
-        sourceArn: prodStageArn,
+        sourceArn: `${prodStageArn}/POST/v1/trigger-payment`,
       }
     );
 
@@ -668,12 +744,12 @@ export class RgbSplittingStack extends cdk.Stack {
         startDate: new Date(),
         description:
           "This rule runs every week to resubscribe all users whose subscribtions have expired to their plan",
-        flexibleTimeWindow: cdk.Duration.minutes(5),
+        flexibleTimeWindow: cdk.Duration.minutes(7),
         target: new EventBridgeSchedulerTarget({
           arn: resubscribeLambda.functionArn,
           role: eventBridgeRole,
           retryPolicy: {
-            maximumRetryAttempts: 2,
+            maximumRetryAttempts: 4,
             maximumEventAge: cdk.Duration.days(1),
           },
         }),
@@ -682,6 +758,9 @@ export class RgbSplittingStack extends cdk.Stack {
 
     cancelSubscriptionQueue.grantSendMessages(resubscribeLambda);
     cancelSubscriptionQueue.grantConsumeMessages(cancelSubscriptionLambda);
+
+    resubscribeSubscriptionQueue.grantSendMessages(resubscribeLambda);
+    resubscribeSubscriptionQueue.grantConsumeMessages(resubscribeLambda);
 
     s3Bucket.grantReadWrite(splittingLambda);
 
