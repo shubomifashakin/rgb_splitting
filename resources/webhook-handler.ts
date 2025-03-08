@@ -1,4 +1,13 @@
-import { APIGateway, SecretsManager } from "aws-sdk";
+import {
+  APIGatewayClient,
+  CreateApiKeyCommand,
+  CreateUsagePlanKeyCommand,
+  DeleteUsagePlanKeyCommand,
+} from "@aws-sdk/client-api-gateway";
+import {
+  GetSecretValueCommand,
+  SecretsManagerClient,
+} from "@aws-sdk/client-secrets-manager";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { APIGatewayProxyEventV2, Handler } from "aws-lambda";
 import {
@@ -28,7 +37,11 @@ const client = new DynamoDBClient({ region });
 
 const dynamo = DynamoDBDocumentClient.from(client);
 
-const secretClient = new SecretsManager({
+const apiGatewayClient = new APIGatewayClient({
+  region,
+});
+
+const secretClient = new SecretsManagerClient({
   region,
 });
 
@@ -44,17 +57,19 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
 
   const body = JSON.parse(event.body);
 
-  console.error(body);
+  console.log(body);
 
   try {
     const [paymentGatewaySecret, webhookEventVerifierSecret] =
       await Promise.all([
-        secretClient
-          .getSecretValue({ SecretId: paymentGatewaySecretName })
-          .promise(),
-        secretClient
-          .getSecretValue({ SecretId: webhookEventVerifierSecretName })
-          .promise(),
+        secretClient.send(
+          new GetSecretValueCommand({ SecretId: paymentGatewaySecretName })
+        ),
+        secretClient.send(
+          new GetSecretValueCommand({
+            SecretId: webhookEventVerifierSecretName,
+          })
+        ),
       ]);
 
     if (
@@ -100,8 +115,6 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
         }),
       };
     }
-
-    const apiGateway = new APIGateway();
 
     if (
       webHookEvent.event === "charge.completed" &&
@@ -158,15 +171,15 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
       );
 
       if (!existingProject.Item) {
-        const apiKey = await apiGateway
-          .createApiKey({
+        const apiKey = await apiGatewayClient.send(
+          new CreateApiKeyCommand({
             value: uuid(),
             name: `${webHookEvent.meta_data.projectName.replace(" ", "_")}_${
               webHookEvent.meta_data.userId
             }`,
             enabled: true,
           })
-          .promise();
+        );
 
         if (!apiKey.id || !apiKey.value) {
           console.error("Failed to create api key");
@@ -180,13 +193,13 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
         }
 
         //add the apikey generated to the usage plan
-        await apiGateway
-          .createUsagePlanKey({
+        await apiGatewayClient.send(
+          new CreateUsagePlanKeyCommand({
             usagePlanId: webHookEvent.meta_data.usagePlanId,
             keyId: apiKey.id,
             keyType: "API_KEY",
           })
-          .promise();
+        );
 
         await dynamo.send(
           new PutCommand({
@@ -227,21 +240,21 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
       ) {
         //CANT RUN IN PARALLEl BECAUSE AN APIKEY CAN ONLY BELONG TO 1 USAGE PLAN AT A TIME
         //remove the user from the old usage plan
-        await apiGateway
-          .deleteUsagePlanKey({
+        await apiGatewayClient.send(
+          new DeleteUsagePlanKeyCommand({
             usagePlanId: existingProject.Item.apiKeyInfo.usagePlanId,
             keyId: existingProject.Item.apiKeyInfo.apiKeyId,
           })
-          .promise();
+        );
 
         //add their apikey to the new usage plan
-        await apiGateway
-          .createUsagePlanKey({
+        await apiGatewayClient.send(
+          new CreateUsagePlanKeyCommand({
             usagePlanId: webHookEvent.meta_data.usagePlanId,
             keyId: existingProject.Item.apiKeyInfo.apiKeyId,
             keyType: "API_KEY",
           })
-          .promise();
+        );
       }
 
       await dynamo.send(

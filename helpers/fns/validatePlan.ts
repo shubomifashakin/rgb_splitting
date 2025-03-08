@@ -1,4 +1,8 @@
-import { SecretsManager } from "aws-sdk";
+import {
+  GetSecretValueCommand,
+  SecretsManagerClient,
+} from "@aws-sdk/client-secrets-manager";
+
 import { PaymentPlan, PaymentPlansResponse } from "../../types/paymentPlans";
 import { usagePlanValidator } from "../schemaValidator/validators";
 
@@ -30,7 +34,7 @@ export async function validatePlan({
   chosenUsagePlan: string;
   paymentGatewaySecret: string;
 }> {
-  const secretClient = new SecretsManager({
+  const secretClient = new SecretsManagerClient({
     region,
   });
 
@@ -38,10 +42,12 @@ export async function validatePlan({
 
   //fetch the payment gateway secret and the available usage plans secret
   const [paymentGatewaySecret, availableUsagePlans] = await Promise.all([
-    secretClient
-      .getSecretValue({ SecretId: paymentGatewaySecretName })
-      .promise(),
-    secretClient.getSecretValue({ SecretId: usagePlanSecretName }).promise(),
+    secretClient.send(
+      new GetSecretValueCommand({ SecretId: paymentGatewaySecretName })
+    ),
+    secretClient.send(
+      new GetSecretValueCommand({ SecretId: usagePlanSecretName })
+    ),
   ]);
 
   if (!paymentGatewaySecret.SecretString || !availableUsagePlans.SecretString) {

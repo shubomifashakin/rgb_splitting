@@ -323,11 +323,33 @@ export class RgbSplittingStack extends cdk.Stack {
         actionsEnabled: true,
         alarmName: `${projectPrefix}-resubscribe-alarm`.toUpperCase(),
         alarmDescription:
-          "This alarm is triggered when resubscribe lambda errors",
+          "The lambda for resubscribing users does not function as expected",
+      }
+    );
+
+    const deadLetterQueueAlarm = new cdk.aws_cloudwatch.Alarm(
+      this,
+      `${projectPrefix}-dead-letter-queue-alarm`,
+      {
+        metric: deadLetterQueue.metricApproximateNumberOfMessagesVisible({
+          statistic: "MAX",
+        }),
+        evaluationPeriods: 1,
+        threshold: 1,
+        comparisonOperator:
+          cdk.aws_cloudwatch.ComparisonOperator
+            .GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+        actionsEnabled: true,
+        alarmName: `${projectPrefix}-dead-letter-queue-alarm`.toUpperCase(),
+        alarmDescription: "There are messages in the dead letter queue",
       }
     );
 
     resubscribeErrorAlarm.addAlarmAction(
+      new cdk.aws_cloudwatch_actions.SnsAction(snsTopic)
+    );
+
+    deadLetterQueueAlarm.addAlarmAction(
       new cdk.aws_cloudwatch_actions.SnsAction(snsTopic)
     );
 
@@ -544,15 +566,18 @@ export class RgbSplittingStack extends cdk.Stack {
         actions: [
           "apigateway:POST",
           "apigateway:PATCH",
+          "apigateway:DELETE",
           "secretsmanager:GetSecretValue",
         ],
         resources: [
           `arn:aws:apigateway:${this.region}::/apikeys`,
+          `arn:aws:apigateway:${this.region}::/apikeys/*`,
           `arn:aws:apigateway:${this.region}::/usageplans`,
           `arn:aws:apigateway:${this.region}::/usageplans/*/keys`,
+          `arn:aws:apigateway:${this.region}::/usageplans/*/keys/*`,
+          `arn:aws:secretsmanager:${this.region}:${this.account}:secret:${webhookSecretName}*`,
           `arn:aws:secretsmanager:${this.region}:${this.account}:secret:${paymentSecretName}*`,
           `arn:aws:secretsmanager:${this.region}:${this.account}:secret:${availablePlansSecretName}*`,
-          `arn:aws:secretsmanager:${this.region}:${this.account}:secret:${webhookSecretName}*`,
         ],
       })
     );
@@ -587,7 +612,7 @@ export class RgbSplittingStack extends cdk.Stack {
           `arn:aws:apigateway:${this.region}::/apikeys`,
           `arn:aws:apigateway:${this.region}::/usageplans`, //i did this to prevent circular dependency issues between lambda, the rest api & the usage plans
           `arn:aws:apigateway:${this.region}::/usageplans/*/keys`,
-          `arn:aws:secretsmanager:${this.region}:${this.account}:secret:RGB_PAYMENT_GATEWAY_CHARGE_SECRET*`,
+          `arn:aws:secretsmanager:${this.region}:${this.account}:secret:${paymentSecretName}*`,
           `arn:aws:secretsmanager:${this.region}:${this.account}:secret:${availablePlansSecretName}*`, // i did this to prevent circular dependency issue
         ],
       })
@@ -599,6 +624,7 @@ export class RgbSplittingStack extends cdk.Stack {
           "apigateway:POST",
           "apigateway:PATCH",
           "apigateway:DELETE",
+          "apigateway:GET",
           "secretsmanager:GetSecretValue",
         ],
         resources: [

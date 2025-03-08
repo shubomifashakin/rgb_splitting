@@ -1,5 +1,8 @@
-import { SecretsManager } from "aws-sdk";
 import { Callback, Handler } from "aws-lambda";
+import {
+  GetSecretValueCommand,
+  SecretsManagerClient,
+} from "@aws-sdk/client-secrets-manager";
 
 import * as jwt from "jsonwebtoken";
 
@@ -11,7 +14,7 @@ interface JWTClaims extends jwt.JwtPayload {
 
 const secret_name = process.env.CLERK_JWT_SECRET_NAME!;
 
-const secretClient = new SecretsManager({
+const secretClient = new SecretsManagerClient({
   region: "us-east-1",
 });
 
@@ -44,9 +47,9 @@ export const handler: Handler = async (
   const token = authToken.split(" ")[1];
 
   try {
-    const publicKey = await secretClient
-      .getSecretValue({ SecretId: secret_name })
-      .promise();
+    const publicKey = await secretClient.send(
+      new GetSecretValueCommand({ SecretId: secret_name })
+    );
 
     if (!publicKey) {
       return { statusCode: 500, body: JSON.stringify("Internal Server Error") };

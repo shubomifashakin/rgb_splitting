@@ -1,5 +1,6 @@
-import { S3 } from "aws-sdk";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { APIGatewayProxyEventV2, Handler } from "aws-lambda";
+import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 
 import { v4 as uuid } from "uuid";
 
@@ -16,25 +17,23 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
 
   const imageName = uuid();
 
-  const s3 = new S3({
+  const s3 = new S3Client({
     region,
-    signatureVersion: "v4",
   });
 
-  const params = {
-    Bucket: s3Bucket,
-    Key: imageName,
-    Expires: 3600,
-    Metadata: {
-      process: "",
-      email: "", //the email
-    },
-    ContentType: "image/png",
-    ContentLength: 5 * 1024 * 1024, //this limits the file size that a user can upload to thr presigned url
-  };
-
   try {
-    const signedUrl = await s3.getSignedUrlPromise("putObject", params);
+    const command = new PutObjectCommand({
+      Bucket: s3Bucket,
+      Key: imageName,
+      Metadata: {
+        process: "",
+        email: "", //the email
+      },
+      ContentType: "image/png",
+      ContentLength: 5 * 1024 * 1024, //this limits the file size that a user can upload to thr presigned url
+    });
+
+    const signedUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
 
     return { statusCode: 200, body: signedUrl };
   } catch (error: unknown) {

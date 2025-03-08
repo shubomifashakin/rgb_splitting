@@ -1,6 +1,6 @@
-import { SQS } from "aws-sdk";
 import { Handler } from "aws-lambda";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
 
 import { validatePlan } from "../helpers/fns/validatePlan";
@@ -17,7 +17,7 @@ const client = new DynamoDBClient({ region });
 
 const dynamo = DynamoDBDocumentClient.from(client);
 
-const sqsQueue = new SQS({ apiVersion: "latest" });
+const sqsQueue = new SQSClient({ apiVersion: "latest" });
 
 export const handler: Handler = async () => {
   try {
@@ -99,11 +99,12 @@ export const handler: Handler = async () => {
             }
 
             await sqsQueue
-              .sendMessage({
-                MessageBody: JSON.stringify(project),
-                QueueUrl: cancelSubscriptionQueueUrl,
-              })
-              .promise()
+              .send(
+                new SendMessageCommand({
+                  MessageBody: JSON.stringify(project),
+                  QueueUrl: cancelSubscriptionQueueUrl,
+                })
+              )
               .catch((error: unknown) => {
                 console.error(
                   "ERROR: Failed to send project with expired subscription to queue",
@@ -124,11 +125,12 @@ export const handler: Handler = async () => {
 
           if (attempts >= 2) {
             await sqsQueue
-              .sendMessage({
-                MessageBody: JSON.stringify(project),
-                QueueUrl: cancelSubscriptionQueueUrl,
-              })
-              .promise()
+              .send(
+                new SendMessageCommand({
+                  MessageBody: JSON.stringify(project),
+                  QueueUrl: cancelSubscriptionQueueUrl,
+                })
+              )
               .catch((error: unknown) => {
                 console.error(
                   "ERROR: Failed to send project with expired subscription to queue",
