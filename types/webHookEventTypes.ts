@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { planNameValidator } from "../helpers/schemaValidator/planNameValidator";
 
 export const webHookEventValidator = z.object({
   event: z.enum(["charge.completed"]),
@@ -8,7 +9,7 @@ export const webHookEventValidator = z.object({
     userId: z.string(),
     usagePlanId: z.string(),
     projectName: z.string(),
-    planName: z.string(),
+    planName: planNameValidator,
   }),
 });
 

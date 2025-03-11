@@ -1,8 +1,13 @@
 import { Construct } from "constructs";
 
 import * as cdk from "aws-cdk-lib";
-import { LayerVersion, Runtime } from "aws-cdk-lib/aws-lambda";
-import { BlockPublicAccess, Bucket, EventType } from "aws-cdk-lib/aws-s3";
+import { LayerVersion, RecursiveLoop, Runtime } from "aws-cdk-lib/aws-lambda";
+import {
+  BlockPublicAccess,
+  Bucket,
+  EventType,
+  HttpMethods,
+} from "aws-cdk-lib/aws-s3";
 import { NodejsFunction } from "aws-cdk-lib/aws-lambda-nodejs";
 import {
   AuthorizationType,
@@ -15,20 +20,17 @@ import {
   TokenAuthorizer,
   UsagePlan,
 } from "aws-cdk-lib/aws-apigateway";
-import { HttpMethod, Schedule } from "aws-cdk-lib/aws-events";
-import { PolicyStatement, ServicePrincipal } from "aws-cdk-lib/aws-iam";
-import { S3Bucket } from "aws-cdk-lib/aws-kinesisfirehose";
+import { HttpMethod } from "aws-cdk-lib/aws-events";
 import { AttributeType, Table } from "aws-cdk-lib/aws-dynamodb";
 import { LambdaDestination } from "aws-cdk-lib/aws-s3-notifications";
+import { PolicyStatement, Role, ServicePrincipal } from "aws-cdk-lib/aws-iam";
 
 import * as dotenv from "dotenv";
-import {
-  EventBridgeSchedulerCreateScheduleTask,
-  EventBridgeSchedulerTarget,
-} from "aws-cdk-lib/aws-stepfunctions-tasks";
 import { Queue } from "aws-cdk-lib/aws-sqs";
 import { Secret } from "aws-cdk-lib/aws-secretsmanager";
 import { SqsEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
+
+import { PlanType } from "../helpers/constants";
 
 dotenv.config();
 
@@ -39,6 +41,7 @@ const webhookSecretName = process.env.WEBHOOK_SECRET_NAME!;
 const clerkJwtSecretName = process.env.CLERK_JWT_SECRET_NAME!;
 const paymentGatewayUrl = process.env.PAYMENT_GATEWAY_URL!;
 const alarmSubscriptionEmail = process.env.SUBSCRIPTION_EMAIL!;
+const maxPlanSizesSecretName = process.env.MAX_PLAN_SIZES_SECRET_NAME!;
 
 ///did this to prevent a circular dependency issue betweent the lmbdas that neeed the secret name and the usage plans
 const availablePlansSecretName = `${projectPrefix}-all-usage-plans-secret`;
@@ -58,9 +61,17 @@ export class RgbSplittingStack extends cdk.Stack {
       bucketName: "rgb-split-bucket-sh",
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       blockPublicAccess: BlockPublicAccess.BLOCK_ACLS,
+      cors: [
+        {
+          allowedHeaders: ["*"],
+          allowedMethods: [HttpMethods.POST, HttpMethods.GET, HttpMethods.PUT],
+          allowedOrigins: Cors.ALL_ORIGINS,
+          exposedHeaders: ["ETAG"],
+        },
+      ],
     });
 
-    const usersTable = new Table(this, `${projectPrefix}-table-sh`, {
+    const projectsTable = new Table(this, `${projectPrefix}-table-sh`, {
       tableName: `${projectPrefix}-table-sh`,
       partitionKey: {
         name: "id",
@@ -76,7 +87,7 @@ export class RgbSplittingStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
-    usersTable.addGlobalSecondaryIndex({
+    projectsTable.addGlobalSecondaryIndex({
       indexName: "expiredSubscriptionIndex",
       partitionKey: {
         name: "sub_status",
@@ -89,10 +100,18 @@ export class RgbSplittingStack extends cdk.Stack {
       },
     });
 
-    usersTable.addGlobalSecondaryIndex({
+    projectsTable.addGlobalSecondaryIndex({
       indexName: "userIdIndex",
       partitionKey: {
         name: "userId",
+        type: AttributeType.STRING,
+      },
+    });
+
+    projectsTable.addGlobalSecondaryIndex({
+      indexName: "apiKeyIndex",
+      partitionKey: {
+        name: "apiKey",
         type: AttributeType.STRING,
       },
     });
@@ -167,7 +186,7 @@ export class RgbSplittingStack extends cdk.Stack {
         environment: {
           REGION: this.region,
           BUCKET_NAME: s3Bucket.bucketName,
-          TABLE_NAME: usersTable.tableName,
+          TABLE_NAME: projectsTable.tableName,
         },
         entry: "./resources/splitting-handler.ts",
         handler: "handler",
@@ -195,8 +214,10 @@ export class RgbSplittingStack extends cdk.Stack {
         timeout: cdk.Duration.seconds(10),
         runtime: Runtime.NODEJS_20_X,
         environment: {
-          BUCKET_NAME: S3Bucket.name,
           REGION: this.region,
+          BUCKET_NAME: s3Bucket.bucketName,
+          TABLE_NAME: projectsTable.tableName,
+          MAX_PLAN_SIZES_SECRET_NAME: maxPlanSizesSecretName,
         },
         entry: "./resources/generate-presigned-url.ts",
         handler: "handler",
@@ -216,7 +237,7 @@ export class RgbSplittingStack extends cdk.Stack {
         handler: "handler",
         environment: {
           REGION: this.region,
-          TABLE_NAME: usersTable.tableName,
+          TABLE_NAME: projectsTable.tableName,
           PAYMENT_SECRET_NAME: paymentSecretName,
           WEBHOOK_SECRET_NAME: webhookSecretName,
           PAYMENT_GATEWAY_URL: paymentGatewayUrl,
@@ -238,7 +259,7 @@ export class RgbSplittingStack extends cdk.Stack {
         handler: "handler",
         environment: {
           REGION: this.region,
-          TABLE_NAME: usersTable.tableName,
+          TABLE_NAME: projectsTable.tableName,
         },
         timeout: cdk.Duration.seconds(10),
       }
@@ -291,7 +312,7 @@ export class RgbSplittingStack extends cdk.Stack {
         handler: "handler",
         environment: {
           REGION: this.region,
-          TABLE_NAME: usersTable.tableName,
+          TABLE_NAME: projectsTable.tableName,
           PAYMENT_GATEWAY_URL: paymentGatewayUrl,
           PAYMENT_SECRET_NAME: paymentSecretName,
           AVAILABLE_PLANS_SECRET_NAME: availablePlansSecretName,
@@ -299,6 +320,7 @@ export class RgbSplittingStack extends cdk.Stack {
           CANCEL_SUBSCRIPTION_QUEUE_URL: cancelSubscriptionQueue.queueUrl,
         },
         timeout: cdk.Duration.minutes(2),
+        recursiveLoop: RecursiveLoop.ALLOW, // got an email from aws thar my function was terminated, so i added this, the resubscribe lambda uses a recursive design
       }
     );
 
@@ -314,7 +336,7 @@ export class RgbSplittingStack extends cdk.Stack {
         handler: "handler",
         environment: {
           REGION: this.region,
-          TABLE_NAME: usersTable.tableName,
+          TABLE_NAME: projectsTable.tableName,
           AVAILABLE_PLANS_SECRET_NAME: availablePlansSecretName,
         },
         timeout: cdk.Duration.seconds(45),
@@ -358,7 +380,7 @@ export class RgbSplittingStack extends cdk.Stack {
         actionsEnabled: true,
         alarmName: `${projectPrefix}-resubscribe-alarm`.toUpperCase(),
         alarmDescription:
-          "The lambda for resubscribing users does not function as expected",
+          "There have been 2 or more errors in the lambda for resubscribing users in the last 10 minutes",
       }
     );
 
@@ -371,7 +393,7 @@ export class RgbSplittingStack extends cdk.Stack {
           period: cdk.Duration.minutes(10),
           statistic: "sum",
         }),
-        threshold: 1,
+        threshold: 4,
         evaluationPeriods: 1,
         comparisonOperator:
           cdk.aws_cloudwatch.ComparisonOperator
@@ -379,7 +401,28 @@ export class RgbSplittingStack extends cdk.Stack {
         actionsEnabled: true,
         alarmName: `${projectPrefix}-webhook-alarm`.toUpperCase(),
         alarmDescription:
-          "The lambda for handling webhooks does not function as expected",
+          "There have been 4 or more errors in the lambda for handling webhooks in the last 10 minutes",
+      }
+    );
+
+    const generatePresignedUrlAlarm = new cdk.aws_cloudwatch.Alarm(
+      this,
+      `${projectPrefix}-generate-presigned-url-alarm`,
+      {
+        metric: generatePresignedUrlLambda.metricErrors({
+          period: cdk.Duration.minutes(10),
+          statistic: "sum",
+        }),
+        threshold: 4,
+        evaluationPeriods: 1,
+        comparisonOperator:
+          cdk.aws_cloudwatch.ComparisonOperator
+            .GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+        actionsEnabled: true,
+        alarmName:
+          `${projectPrefix}-generate-presigned-url-alarm`.toUpperCase(),
+        alarmDescription:
+          "There have been 4 or more errors in the lambda for generating presigned URLs in the last 10 minutes",
       }
     );
 
@@ -434,6 +477,10 @@ export class RgbSplittingStack extends cdk.Stack {
     );
 
     webHookErrorAlarm.addAlarmAction(
+      new cdk.aws_cloudwatch_actions.SnsAction(snsTopic)
+    );
+
+    generatePresignedUrlAlarm.addAlarmAction(
       new cdk.aws_cloudwatch_actions.SnsAction(snsTopic)
     );
 
@@ -546,14 +593,35 @@ export class RgbSplittingStack extends cdk.Stack {
     const usagePlansSecret = new Secret(this, `${availablePlansSecretName}`, {
       secretName: `${availablePlansSecretName}`,
       secretObjectValue: {
-        free: cdk.SecretValue.unsafePlainText(freeTierUsagePlan.usagePlanId),
-        pro: cdk.SecretValue.unsafePlainText(proTierUsagePlan.usagePlanId),
-        executive: cdk.SecretValue.unsafePlainText(
+        [PlanType.Free]: cdk.SecretValue.unsafePlainText(
+          freeTierUsagePlan.usagePlanId
+        ),
+        [PlanType.Pro]: cdk.SecretValue.unsafePlainText(
+          proTierUsagePlan.usagePlanId
+        ),
+        [PlanType.Executive]: cdk.SecretValue.unsafePlainText(
           executiveTierUsagePlan.usagePlanId
         ),
       },
       description:
         "this is used to store all the usage planIds so we dont have to keep passing them around",
+    });
+
+    //this stores the maximum image sizes each plan can upload
+    const maxPlanSizesSecret = new Secret(this, `${maxPlanSizesSecretName}`, {
+      secretName: `${maxPlanSizesSecretName}`,
+      secretObjectValue: {
+        [PlanType.Free]: cdk.SecretValue.unsafePlainText(
+          String(10 * 1024 * 1024)
+        ),
+        [PlanType.Pro]: cdk.SecretValue.unsafePlainText(
+          String(20 * 1024 * 1024)
+        ),
+        [PlanType.Executive]: cdk.SecretValue.unsafePlainText(
+          String(80 * 1024 * 1024)
+        ),
+      },
+      description: "this is used to store the max plan sizes",
     });
 
     const v1Root = rgbRestApi.root.addResource("v1");
@@ -601,6 +669,8 @@ export class RgbSplittingStack extends cdk.Stack {
     const prodStageArn = `arn:aws:execute-api:${cdk.Stack.of(this).region}:${
       cdk.Stack.of(this).account
     }:${rgbRestApi.restApiId}/prod`;
+
+    maxPlanSizesSecret.grantRead(generatePresignedUrlLambda);
 
     //alow the prod stage invoke our lambdas
     generatePresignedUrlLambda.addPermission(
@@ -672,7 +742,7 @@ export class RgbSplittingStack extends cdk.Stack {
       new PolicyStatement({
         actions: ["secretsmanager:GetSecretValue"],
         resources: [
-          `arn:aws:secretsmanager:${this.region}:${this.account}:secret:RGB_CLERK_JWT_PUBLIC_KEY*`,
+          `arn:aws:secretsmanager:${this.region}:${this.account}:secret:${clerkJwtSecretName}*`,
         ],
       })
     );
@@ -714,47 +784,71 @@ export class RgbSplittingStack extends cdk.Stack {
       })
     );
 
-    const eventBridgeRole = new cdk.aws_iam.Role(
+    const eventBridgeRole = new Role(
       this,
       `${projectPrefix}-resubscribe-event-role`,
       {
         roleName: `${projectPrefix}-resubscribe-event-role`,
         description:
           "This role allows eventbridge to trigger our resubscription lambda",
-        assumedBy: new cdk.aws_iam.ServicePrincipal("events.amazonaws.com"),
+        assumedBy: new ServicePrincipal("scheduler.amazonaws.com"),
       }
     );
 
     //allow eventbridge to trigger lambda function
     eventBridgeRole.addToPolicy(
-      new cdk.aws_iam.PolicyStatement({
+      new PolicyStatement({
         actions: ["lambda:InvokeFunction"],
         resources: [resubscribeLambda.functionArn],
       })
     );
 
-    //this event bridge rule is used to cancel all expired subscriptions
-    //calls the cancel lambda every week
-    const eventBridgeTask = new EventBridgeSchedulerCreateScheduleTask(
-      this,
-      `${projectPrefix}-resubscribe-eventbridge-task`,
-      {
-        scheduleName: `${projectPrefix}-resubscribe-eventbridge-task`,
-        schedule: Schedule.rate(cdk.Duration.minutes(3)),
-        startDate: new Date(),
-        description:
-          "This rule runs every week to resubscribe all users whose subscribtions have expired to their plan",
-        flexibleTimeWindow: cdk.Duration.minutes(7),
-        target: new EventBridgeSchedulerTarget({
-          arn: resubscribeLambda.functionArn,
-          role: eventBridgeRole,
-          retryPolicy: {
-            maximumRetryAttempts: 4,
-            maximumEventAge: cdk.Duration.days(1),
+    // //this event bridge rule is used to cancel all expired subscriptions
+    // //calls the cancel lambda every week
+    // const eventBridgeTask = new EventBridgeSchedulerCreateScheduleTask(
+    //   this,
+    //   `${projectPrefix}-resubscribe-eventbridge-task`,
+    //   {
+    //     scheduleName: `${projectPrefix}-resubscribe-eventbridge-task`,
+    //     schedule: Schedule.rate(cdk.Duration.minutes(3)),
+    //     startDate: new Date(),
+    //     description:
+    //       "This rule runs every week to resubscribe all users whose subscribtions have expired to their plan",
+    //     flexibleTimeWindow: cdk.Duration.minutes(7),
+    //     target: new EventBridgeSchedulerTarget({
+    //       arn: resubscribeLambda.functionArn,
+    //       role: eventBridgeRole,
+    //       retryPolicy: {
+    //         maximumRetryAttempts: 4,
+    //         maximumEventAge: cdk.Duration.days(1),
+    //       },
+    //     }),
+    //   }
+    // );
+
+    //for some reason, the eventbridge construct never created my scheduke but this works tho
+    new cdk.CfnResource(this, `${projectPrefix}-resubscribe-eventbridge-task`, {
+      type: "AWS::Scheduler::Schedule",
+      properties: {
+        Name: `${projectPrefix}-resubscribe-eventbridge-task`,
+        Description:
+          "This rule runs every week to resubscribe all users whose subscriptions have expired to their plan",
+        ScheduleExpression: "rate(7 days)",
+        State: "ENABLED",
+        FlexibleTimeWindow: {
+          Mode: "FLEXIBLE",
+          MaximumWindowInMinutes: 7,
+        },
+        Target: {
+          Arn: resubscribeLambda.functionArn,
+          RoleArn: eventBridgeRole.roleArn,
+          RetryPolicy: {
+            MaximumEventAgeInSeconds: 86400,
+            MaximumRetryAttempts: 4,
           },
-        }),
-      }
-    );
+        },
+      },
+    });
 
     cancelSubscriptionQueue.grantSendMessages(resubscribeLambda);
     cancelSubscriptionQueue.grantConsumeMessages(cancelSubscriptionLambda);
@@ -768,17 +862,18 @@ export class RgbSplittingStack extends cdk.Stack {
 
     //trigger the splitting lambda when there is a new object added to the s3 bucket
     s3Bucket.addEventNotification(
-      EventType.OBJECT_CREATED_PUT,
+      EventType.OBJECT_CREATED_POST,
       new LambdaDestination(splittingLambda)
     );
 
-    usersTable.grantReadWriteData(webHookLambda);
-    usersTable.grantReadWriteData(resubscribeLambda);
+    projectsTable.grantReadWriteData(webHookLambda);
+    projectsTable.grantReadWriteData(resubscribeLambda);
+    projectsTable.grantReadData(generatePresignedUrlLambda);
 
-    usersTable.grantWriteData(splittingLambda);
+    projectsTable.grantWriteData(splittingLambda);
 
-    usersTable.grantReadData(getUsersApiKeysLambda);
+    projectsTable.grantReadData(getUsersApiKeysLambda);
 
-    usersTable.grantReadWriteData(cancelSubscriptionLambda);
+    projectsTable.grantReadWriteData(cancelSubscriptionLambda);
   }
 }

@@ -21,6 +21,7 @@ import {
 import { ExpiredProject } from "../types/expiredSubscriptionProjectInfo";
 
 import { usagePlanValidator } from "../helpers/schemaValidator/validators";
+import { PlanType } from "../helpers/constants";
 
 const region = process.env.REGION!;
 const tableName = process.env.TABLE_NAME!;
@@ -167,7 +168,7 @@ export const handler = async (event: SQSEvent): Promise<SQSBatchResponse> => {
             UpdateExpression:
               "set apiKeyInfo.usagePlanId = :usagePlanId, currentPlan = :planName",
             ExpressionAttributeValues: {
-              ":planName": "free",
+              ":planName": PlanType.Free,
               ":usagePlanId": allUsagePlans.free,
             },
           })

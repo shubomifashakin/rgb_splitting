@@ -124,7 +124,10 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
       if (!chargeVerificationReq.ok) {
         const failureReason = await chargeVerificationReq.json();
 
-        console.error("Failed to verify charge", failureReason);
+        console.error(
+          `Failed to verify charge for ${eventData.customer.email}, PROJECT: ${webHookEvent.meta_data.projectName}, USER: ${webHookEvent.meta_data.userId}`,
+          failureReason
+        );
 
         throw new Error("Failed to verify payment");
       }
@@ -167,7 +170,9 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
         );
 
         if (!apiKey.id || !apiKey.value) {
-          console.error("Failed to create api key");
+          console.error(
+            `Failed to create api key for project ${webHookEvent.meta_data.projectName} by user ${webHookEvent.meta_data.userId}`
+          );
 
           throw new Error("Internal server error - failed to create api key");
         }
@@ -194,6 +199,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
               currentBillingDate: new Date(eventData.created_at).getTime(),
               createdAt: new Date(eventData.created_at).getTime(),
               currentPlan: webHookEvent.meta_data.planName,
+              apiKey: apiKey.value,
               apiKeyInfo: {
                 apiKeyId: apiKey.id,
                 apiKey: apiKey.value,

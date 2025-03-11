@@ -2,8 +2,8 @@ import { APIGatewayProxyEventV2, Handler } from "aws-lambda";
 
 import { v4 as uuid } from "uuid";
 
-import { newPaymentRequestBodyValidator } from "../helpers/schemaValidator/validators";
 import { validatePlan } from "../helpers/fns/validatePlan";
+import { newPaymentRequestBodyValidator } from "../helpers/schemaValidator/validators";
 
 const region = process.env.REGION!;
 const paymentGatewayUrl = process.env.PAYMENT_GATEWAY_URL!;
@@ -47,6 +47,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
 
     const paymentParams = {
       tx_ref: uuid(),
+      narration: `Payment for project: ${data.projectName}`,
       amount: planDetails.amount,
       currency: planDetails.currency,
       redirect_url: "http://localhost:3000/dashboard/new",
@@ -99,7 +100,10 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
       headers,
     };
   } catch (error: unknown) {
-    console.error(error, "HELLO WORLD");
+    console.error(
+      `ERROR INITIATING PAYMENT FOR USER ${data.userId} ${data.email}`,
+      error
+    );
 
     return {
       statusCode: 500,

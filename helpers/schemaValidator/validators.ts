@@ -1,12 +1,11 @@
 import { z } from "zod";
 
+import { planNameValidator } from "./planNameValidator";
+
+import { PlanType } from "../constants";
+
 export const newPaymentRequestBodyValidator = z.object({
-  planName: z
-    .string({ message: "Plan name should be a string" })
-    .transform((value) => value.toLowerCase().trim())
-    .refine((value) => ["free", "pro", "executive"].includes(value), {
-      message: "Invalid plan name",
-    }),
+  planName: planNameValidator,
 
   projectName: z
     .string({ message: "Project name should be a string" })
@@ -26,7 +25,7 @@ export const newPaymentRequestBodyValidator = z.object({
 });
 
 export const usagePlanValidator = z.object({
-  free: z.string(),
-  pro: z.string(),
-  executive: z.string(),
+  [PlanType.Free]: z.string(),
+  [PlanType.Pro]: z.string(),
+  [PlanType.Executive]: z.string(),
 });
