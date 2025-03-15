@@ -3,9 +3,10 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
 
-import { validatePlan } from "../helpers/fns/validatePlan";
-import { ExpiredProject } from "../types/expiredSubscriptionProjectInfo";
 import { PlanType } from "../helpers/constants";
+import { validatePlan } from "../helpers/fns/validatePlan";
+
+import { ExpiredProject } from "../types/expiredSubscriptionProjectInfo";
 
 const region = process.env.REGION!;
 const tableName = process.env.TABLE_NAME!;

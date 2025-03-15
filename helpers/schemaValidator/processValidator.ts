@@ -1,48 +1,71 @@
 import { z } from "zod";
 
+import { normalizeChannel } from "../fns/channelsNormalization";
+
+import { Channels } from "../../types/channels";
+import { defaultChannel, defaultGrain } from "../constants";
+
+const possibleChannels = Object.values(Channels);
+
+//channels could either be a string or a string array
+//the resulting value will always bbe an array
+export const channelsValidator = z
+  .union([
+    z
+      .string()
+      .transform((val) => val.toLowerCase())
+      .refine((val) => possibleChannels.includes(val as Channels), {
+        message: "Invalid Process. Invalid channel value",
+      }),
+
+    //it must be a non emoty array
+    z
+      .array(z.string().transform((val) => val.toLowerCase()))
+      .max(3)
+      .refine(
+        (arr) =>
+          arr.every((val) => possibleChannels.includes(val as Channels)) &&
+          arr.length,
+        { message: "Invalid Process. Invalid channel value in array" }
+      ),
+  ]) //normalize the value of channels
+  .transform(normalizeChannel)
+  .optional()
+  .default(defaultChannel);
+
+//grain could either be a number or a number array
+//the resulting value will be an array
+//if the user specified just a number and not an array, use that grain value for all the channels
+//if they specified an array, then just use that array
+export const grainValidator = z
+  .union([
+    z.number().transform((val) => Math.min(255, val)),
+
+    z
+      .array(z.number().transform((val) => Math.min(255, val)))
+      .max(3)
+      .refine((arr) => arr.length, {
+        message: "No grain values provided in array",
+      }),
+  ])
+  .transform((val) => (Array.isArray(val) ? val : [val, val, val]))
+  .optional()
+  .default(defaultGrain);
+
+//i wanted a situation where users can exclude either channels or grain but not both
 export const processValidator = z
   .object({
-    channels: z
-      .enum([
-        "rgb",
-        "rbg",
-        "grb",
-        "gbr",
-        "brg",
-        "bgr",
-        "r",
-        "g",
-        "b",
-        "rg",
-        "rb",
-        "gr",
-        "gb",
-        "br",
-        "bg",
-        "RGB",
-        "RBG",
-        "GRB",
-        "GBR",
-        "BRG",
-        "BGR",
-        "R",
-        "G",
-        "B",
-        "RG",
-        "RB",
-        "GR",
-        "GB",
-        "BR",
-        "BG",
-      ])
-      .optional(),
-    distortion: z.number().default(0).optional(),
+    channels: channelsValidator,
+    grain: grainValidator,
   })
   .refine(
     (data) => {
-      return data.channels !== undefined || data.distortion !== undefined;
+      return data.channels !== undefined || data.grain !== undefined;
     },
     {
-      message: "At least one of 'channels' or 'distortion' must be present.",
+      message: "At least one of 'channels' or 'grain' must be present.",
     }
   );
+
+export type ChannelType = z.infer<typeof channelsValidator>;
+export type grainType = z.infer<typeof grainValidator>;

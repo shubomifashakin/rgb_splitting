@@ -35,12 +35,14 @@ import { PlanType } from "../helpers/constants";
 dotenv.config();
 
 const projectPrefix = "rgb-splitting";
+
 const region = process.env.REGION!;
+const paymentGatewayUrl = process.env.PAYMENT_GATEWAY_URL!;
+const alarmSubscriptionEmail = process.env.SUBSCRIPTION_EMAIL!;
+
 const paymentSecretName = process.env.PAYMENT_SECRET_NAME!;
 const webhookSecretName = process.env.WEBHOOK_SECRET_NAME!;
 const clerkJwtSecretName = process.env.CLERK_JWT_SECRET_NAME!;
-const paymentGatewayUrl = process.env.PAYMENT_GATEWAY_URL!;
-const alarmSubscriptionEmail = process.env.SUBSCRIPTION_EMAIL!;
 const maxPlanSizesSecretName = process.env.MAX_PLAN_SIZES_SECRET_NAME!;
 
 ///did this to prevent a circular dependency issue betweent the lmbdas that neeed the secret name and the usage plans
@@ -293,7 +295,7 @@ export class RgbSplittingStack extends cdk.Stack {
         runtime: Runtime.NODEJS_22_X,
         entry: "./resources/authorizer-lambda-handler.ts",
         handler: "handler",
-        timeout: cdk.Duration.seconds(20),
+        timeout: cdk.Duration.seconds(10),
         environment: {
           CLERK_JWT_SECRET_NAME: clerkJwtSecretName,
         },
@@ -670,8 +672,6 @@ export class RgbSplittingStack extends cdk.Stack {
       cdk.Stack.of(this).account
     }:${rgbRestApi.restApiId}/prod`;
 
-    maxPlanSizesSecret.grantRead(generatePresignedUrlLambda);
-
     //alow the prod stage invoke our lambdas
     generatePresignedUrlLambda.addPermission(
       `${projectPrefix}-allow-prod-stage-permission`,
@@ -850,13 +850,16 @@ export class RgbSplittingStack extends cdk.Stack {
       },
     });
 
+    maxPlanSizesSecret.grantRead(generatePresignedUrlLambda);
+
     cancelSubscriptionQueue.grantSendMessages(resubscribeLambda);
     cancelSubscriptionQueue.grantConsumeMessages(cancelSubscriptionLambda);
 
     resubscribeSubscriptionQueue.grantSendMessages(resubscribeLambda);
     resubscribeSubscriptionQueue.grantConsumeMessages(resubscribeLambda);
 
-    s3Bucket.grantReadWrite(splittingLambda);
+    s3Bucket.grantPut(splittingLambda);
+    s3Bucket.grantRead(splittingLambda);
 
     s3Bucket.grantPut(generatePresignedUrlLambda);
 

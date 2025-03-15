@@ -3,15 +3,19 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { APIGatewayProxyEventV2, Handler } from "aws-lambda";
 import { createPresignedPost } from "@aws-sdk/s3-presigned-post";
 import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
-
-import { v4 as uuid } from "uuid";
-
-import { processValidator } from "../helpers/schemaValidator/processValidator";
 import {
   GetSecretValueCommand,
   SecretsManagerClient,
 } from "@aws-sdk/client-secrets-manager";
-import { planNameValidator } from "../helpers/schemaValidator/planNameValidator";
+
+import { v4 as uuid } from "uuid";
+
+import {
+  PlanType,
+  defaultGrain,
+  defaultNormalizedChannel,
+} from "../helpers/constants";
+import { processValidator } from "../helpers/schemaValidator/processValidator";
 import { planSizesValidator } from "../helpers/schemaValidator/planSizesValidator";
 
 const region = process.env.REGION!;
@@ -44,6 +48,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
   }
 
   const body = JSON.parse(event.body);
+  console.log("event body", body);
 
   const { data, success, error } = processValidator.safeParse(body);
 
@@ -57,7 +62,23 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     };
   }
 
-  const { channels, distortion } = data;
+  const { channels, grain } = data;
+
+  //this process would not generate a new image, so do not respond
+  if (
+    channels.length === defaultNormalizedChannel.length &&
+    channels.every((channel) => defaultNormalizedChannel.includes(channel)) &&
+    grain.length === defaultGrain.length &&
+    grain.every((dist) => defaultGrain.includes(dist))
+  ) {
+    return {
+      statusCode: 400,
+      body: JSON.stringify({
+        message: "Process results in same image! Your post body may be empty.",
+      }),
+      headers,
+    };
+  }
 
   const apiKey = event.headers?.["x-api-key"];
 
@@ -65,19 +86,32 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     return { statusCode: 400, body: JSON.stringify("Unauthorized"), headers };
   }
 
-  //get the project the apikey is attached to
-  const project = await dynamoClient.send(
-    new QueryCommand({
-      TableName: tableName,
-      KeyConditionExpression: "apiKey = :apiKey",
-      IndexName: "apiKeyIndex",
-      ExpressionAttributeValues: {
-        ":apiKey": apiKey,
-      },
-      ProjectionExpression: "id, userId, currentPlan",
-      Limit: 1,
-    })
-  );
+  //get the project the apikey is attached to && the maxPlan sizes from secret manager
+  const [project, maxPlanSizes] = await Promise.all([
+    dynamoClient.send(
+      new QueryCommand({
+        TableName: tableName,
+        KeyConditionExpression: "apiKey = :apiKey",
+        IndexName: "apiKeyIndex",
+        ExpressionAttributeValues: {
+          ":apiKey": apiKey,
+        },
+        ProjectionExpression: "id, userId, currentPlan, projectName",
+        Limit: 1,
+      })
+    ),
+    secretClient.send(
+      new GetSecretValueCommand({
+        SecretId: maxPlanSizesSecretName,
+      })
+    ),
+  ]);
+
+  if (!maxPlanSizes.SecretString) {
+    console.error("Max plan size secret is empty");
+
+    throw new Error("Max plan size secret is empty");
+  }
 
   if (!project.Items || !project.Items.length) {
     return {
@@ -89,29 +123,20 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     };
   }
 
-  const { currentPlan } = project.Items[0];
+  const projectData = project.Items[0];
 
-  const {
-    data: planName,
-    success: planNameSuccess,
-    error: planNameError,
-  } = planNameValidator.safeParse(currentPlan);
-
-  if (!planNameSuccess) {
-    throw new Error(`Invalid plan name ${planNameError.message}`);
-  }
-
-  //here, i fetch the maximum file sizes the user is allowed to upload based on their plan
-  const maxPlanSizes = await secretClient.send(
-    new GetSecretValueCommand({
-      SecretId: maxPlanSizesSecretName,
-    })
-  );
-
-  if (!maxPlanSizes.SecretString) {
-    console.error("Max plan size secret is empty");
-
-    throw new Error("Max plan size secret is empty");
+  //if a free user tried to get multiple channels or grains from an image, shut it down. you not paying enough my g 🤷‍♂️
+  if (
+    projectData.currentPlan === PlanType.Free &&
+    (channels.length > 1 || grain.length > 1)
+  ) {
+    return {
+      headers,
+      statusCode: 400,
+      body: JSON.stringify({
+        message: "Free Plan does not support multiple channels",
+      }),
+    };
   }
 
   const parsedMaxPlanSizes = JSON.parse(maxPlanSizes.SecretString);
@@ -125,21 +150,21 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
   if (!maxSizesSuccess) {
     console.log(maxSizesError.message);
 
-    throw new Error(`Invalid max plan sizes data ${maxSizesError.message}`);
+    throw new Error(
+      `Invalid max plan sizes schema received from secret manager ${maxSizesError.message}`
+    );
   }
 
-  console.log(maxSizesData, currentPlan);
-
-  const imageName = uuid();
+  const imageKey = uuid();
 
   try {
     //this was not good enough for my use case, it wasnt alowing me limit the file size & content type
     // const command = new PutObjectCommand({
     //   Bucket: s3Bucket,
-    //   Key: imageName,
+    //   Key: imageKey,
     //   Metadata: {
     //     channels: channels || "",
-    //     distortion: distortion ? String(distortion) : "",
+    //     grain: grain ? String(grain) : "",
     //     projectId: project.Items[0].id,
     //   },
     //   ContentType: "image/png",
@@ -149,35 +174,43 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     //they have 2 minutes to upload the image
     // const signedUrl = await getSignedUrl(s3, command, { expiresIn: 180 });
 
+    const grainValue = JSON.stringify(grain);
+    const channelsValue = JSON.stringify(channels);
+
     const { url, fields } = await createPresignedPost(s3, {
       Bucket: s3Bucket,
-      Key: imageName,
+      Key: imageKey,
       Conditions: [
         { bucket: s3Bucket },
-        { key: imageName },
+        { key: imageKey },
 
         ["starts-with", "$Content-Type", "image/"],
         [
           "content-length-range",
           1,
-          maxSizesData[planName as keyof typeof maxSizesData],
+          maxSizesData[projectData.currentPlan as keyof typeof maxSizesData],
         ], //the content length should not exceed this rAnge
 
-        ["eq", "$x-amz-meta-channels", channels || ""],
-        ["eq", "$x-amz-meta-project_id", project.Items[0].id],
-        ["eq", "$x-amz-meta-distortion", distortion ? String(distortion) : ""],
+        ["eq", "$x-amz-meta-channels", channelsValue],
+        ["eq", "$x-amz-meta-project_id", projectData.id],
+        ["eq", "$x-amz-meta-grain", grainValue],
+        ["eq", "$x-amz-meta-project_name", projectData.projectName],
       ],
 
       //other fields that we want returned with the url, they must be attached to the formdata
       //if the user changes it, it wont work 😭😭 got them right?
       Fields: {
-        "x-amz-meta-channels": channels || "",
-        "x-amz-meta-project_id": project.Items[0].id,
-        "x-amz-meta-distortion": distortion ? String(distortion) : "",
+        "x-amz-meta-grain": grainValue,
+        "x-amz-meta-channels": channelsValue,
+        "x-amz-meta-project_id": projectData.id,
+        "x-amz-meta-project_name": projectData.projectName,
       },
 
       Expires: 180,
     });
+
+    //create a record in another db, the key of the image should be the id
+    //then return the poll url, which should be a get endpoint like this .../image/{id} id being the image key
 
     return { statusCode: 200, body: JSON.stringify({ url, fields }), headers };
   } catch (error: unknown) {

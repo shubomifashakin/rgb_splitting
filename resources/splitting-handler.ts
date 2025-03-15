@@ -1,74 +1,105 @@
 import { S3Event } from "aws-lambda";
 import { Handler } from "aws-cdk-lib/aws-lambda";
+import {
+  GetObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from "@aws-sdk/client-s3";
 
 import { createCanvas, loadImage } from "canvas";
 
-//handler must be async
+import { processImage } from "../processImageFns/processImage";
+
+import { s3ImageMetadataValidator } from "../helpers/schemaValidator/s3ImageMetadataValidator";
+
+const s3client = new S3Client({ region: process.env.REGION! });
+
 export const handler: Handler = async (event: S3Event) => {
-  // try {
-  const headers = {
-    "Content-Type": "application/json",
-  };
+  try {
+    if (!event.Records.length) {
+      console.log("No records found");
 
-  console.log("first log");
+      throw new Error("No records found");
+    }
 
-  console.log(event);
+    const imageInfo = event.Records[0];
+    console.log(imageInfo);
 
-  return { statusCode: 200 };
+    //get the image from s3
+    const s3Image = await s3client.send(
+      new GetObjectCommand({
+        Bucket: imageInfo.s3.bucket.name,
+        Key: imageInfo.s3.object.key,
+      })
+    );
 
-  //   if (!event.isBase64Encoded || !event.body) {
-  //     return {
-  //       statusCode: 400,
-  //       body: JSON.stringify({ message: "Unsupported format" }),
-  //     };
-  //   }
+    if (!s3Image.Body) {
+      console.log("No image found");
 
-  //   console.log("event received");
+      throw new Error("No image found");
+    }
 
-  //   //get the api key from the headers
-  //   // const apiKey = event.headers["x-api-key"];
+    //validate the metadata received
+    const { data, success, error } = s3ImageMetadataValidator.safeParse(
+      s3Image.Metadata
+    );
 
-  //   //receive the image
-  //   const bufferArray = Buffer.from(event.body, "base64");
+    if (!success) {
+      console.log(error.message);
 
-  //   console.log(bufferArray);
+      throw new Error(`Invalid image metadata ${error.message}`);
+    }
 
-  //   //load the image
-  //   const image = await loadImage(bufferArray);
+    const { channels, grain } = data;
 
-  //   const canvas = createCanvas(image.width, image.height);
+    console.log(channels, grain);
 
-  //   const canvasCtx = canvas.getContext("2d");
+    const transformedImage = await s3Image.Body.transformToByteArray();
+    const bufferArray = Buffer.from(transformedImage);
 
-  //   //draw the image on the canvas
-  //   canvasCtx.drawImage(image, 0, 0);
+    const image = await loadImage(bufferArray);
 
-  //   //get the image data from the canvasCtx
-  //   const imageData = canvasCtx.getImageData(0, 0, image.width, image.height);
+    const canvas = createCanvas(image.width, image.height);
 
-  //   //store the red green & blue images in the users in dynamo db for that particular api key that was used, and also include the date
-  //   console.log("about to show image data");
-  //   console.log(imageData);
+    const canvasCtx = canvas.getContext("2d");
 
-  //   return {
-  //     statusCode: 200,
-  //     headers,
-  //     body: JSON.stringify({ message: "Success!" }),
-  //   };
-  // } catch (error: unknown) {
-  //   if (error instanceof Error) {
-  //     return {
-  //       statusCode: 400,
-  //       body: JSON.stringify({ message: error.message, status: "fail" }),
-  //     };
-  //   }
+    canvasCtx.drawImage(image, 0, 0);
 
-  //   return {
-  //     statusCode: 500,
-  //     body: JSON.stringify({
-  //       message: "Internal Server Error",
-  //       status: "fail",
-  //     }),
-  //   };
-  // }
+    const imageData = canvasCtx.getImageData(0, 0, image.width, image.height);
+
+    const { images, keys } = await processImage(imageData, channels, grain);
+
+    for (let i = 0; i < images.length; i++) {
+      const processedImage = images[i];
+      canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
+
+      canvasCtx.putImageData(processedImage, 0, 0);
+
+      const buffer = canvas.toBuffer("image/jpeg");
+
+      await s3client.send(
+        new PutObjectCommand({
+          Body: buffer,
+          ContentType: "image/png",
+          Bucket: imageInfo.s3.bucket.name,
+          Key: `${imageInfo.s3.object.key}-${keys[i]}`,
+        })
+      );
+    }
+
+    //store the red green & blue images in the users in dynamo db for that particular api key that was used, and also include the date
+    console.log(images);
+
+    return;
+  } catch (error: unknown) {
+    if (error instanceof Error) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({ message: error.message, status: "fail" }),
+      };
+    }
+
+    //so it can be caught by alarm
+    throw error;
+  }
 };
