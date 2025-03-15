@@ -191,9 +191,10 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
           maxSizesData[projectData.currentPlan as keyof typeof maxSizesData],
         ], //the content length should not exceed this rAnge
 
+        ["eq", "$x-amz-meta-grain", grainValue],
         ["eq", "$x-amz-meta-channels", channelsValue],
         ["eq", "$x-amz-meta-project_id", projectData.id],
-        ["eq", "$x-amz-meta-grain", grainValue],
+        ["eq", "$x-amz-meta-user_id", projectData.userId],
         ["eq", "$x-amz-meta-project_name", projectData.projectName],
       ],
 
@@ -203,6 +204,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
         "x-amz-meta-grain": grainValue,
         "x-amz-meta-channels": channelsValue,
         "x-amz-meta-project_id": projectData.id,
+        "x-amz-meta-user_id": projectData.userId,
         "x-amz-meta-project_name": projectData.projectName,
       },
 

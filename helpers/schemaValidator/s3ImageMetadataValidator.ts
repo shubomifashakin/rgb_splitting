@@ -9,6 +9,8 @@ export const s3ImageMetadataValidator = z.object({
 
   project_id: z.string().uuid(),
 
+  user_id: z.string(),
+
   grain: z
     .string()
     .refine(

@@ -29,8 +29,16 @@ import * as dotenv from "dotenv";
 import { Queue } from "aws-cdk-lib/aws-sqs";
 import { Secret } from "aws-cdk-lib/aws-secretsmanager";
 import { SqsEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
+import * as rds from "aws-cdk-lib/aws-rds";
 
 import { PlanType } from "../helpers/constants";
+import { Port, SecurityGroup, SubnetType, Vpc } from "aws-cdk-lib/aws-ec2";
+import {
+  BuildSpec,
+  ComputeType,
+  Project,
+  Source,
+} from "aws-cdk-lib/aws-codebuild";
 
 dotenv.config();
 
@@ -72,6 +80,126 @@ export class RgbSplittingStack extends cdk.Stack {
         },
       ],
     });
+
+    const dbName = `rgbSplitttingDb`;
+    //this generates the secret for the database
+    const newRdsDbSecret = new rds.DatabaseSecret(
+      this,
+      `${projectPrefix}-rds-secret`,
+      {
+        username: "postgres",
+        dbname: dbName, //db name can only be alphanumeric
+        secretName: `${projectPrefix}-rds-db-secret`,
+      }
+    );
+
+    //the vpc the database belongs to
+    const rdsVpc = new Vpc(this, `${projectPrefix}-rds-vpc`, {
+      maxAzs: 2,
+      subnetConfiguration: [
+        {
+          cidrMask: 24,
+          name: "public-subnet",
+          subnetType: SubnetType.PUBLIC,
+        },
+
+        {
+          cidrMask: 24,
+          name: "database-subnet",
+          //isolated subnets are not accessible from the internet
+          subnetType: SubnetType.PRIVATE_ISOLATED,
+        },
+        {
+          cidrMask: 24,
+          name: "lambda-subnet",
+          //allow resources in this subnet to access the internet
+          subnetType: SubnetType.PRIVATE_WITH_EGRESS,
+        },
+      ],
+    });
+
+    //define the firewall of the db
+    const dbSecurityGroup = new SecurityGroup(this, "RdsSecurityGroup", {
+      vpc: rdsVpc,
+      allowAllOutbound: true,
+      description: "Allow only Lambda to access RDS",
+    });
+
+    const lambdaSecurityGroup = new SecurityGroup(this, "LambdaSecurityGroup", {
+      vpc: rdsVpc,
+      allowAllOutbound: true,
+      description: "Allow Lambda to access RDS",
+    });
+
+    const codeBuildSecurityGroup = new SecurityGroup(
+      this,
+      "CodeBuildSecurityGroup",
+      {
+        vpc: rdsVpc,
+        allowAllOutbound: true,
+        description: "Allow CodeBuild to access RDS",
+      }
+    );
+
+    //allow only lambda to access rds
+    dbSecurityGroup.addIngressRule(
+      lambdaSecurityGroup,
+      Port.tcp(5432),
+      "Allow RDS access"
+    );
+
+    //allow codebuild to access rds
+    dbSecurityGroup.addIngressRule(
+      codeBuildSecurityGroup,
+      Port.tcp(5432),
+      "Allow CodeBuild to access RDS"
+    );
+
+    const dbInstance = new rds.DatabaseInstance(
+      this,
+      `${projectPrefix}-rds-db`,
+      {
+        allocatedStorage: 20,
+        maxAllocatedStorage: 25,
+        enablePerformanceInsights: true,
+        storageType: rds.StorageType.GP2,
+        databaseName: dbName,
+        vpc: rdsVpc,
+        vpcSubnets: {
+          subnetType: SubnetType.PRIVATE_ISOLATED,
+        },
+        securityGroups: [dbSecurityGroup],
+        removalPolicy: cdk.RemovalPolicy.SNAPSHOT,
+        engine: rds.DatabaseInstanceEngine.POSTGRES,
+        credentials: rds.Credentials.fromSecret(newRdsDbSecret),
+        performanceInsightRetention: rds.PerformanceInsightRetention.DEFAULT,
+      }
+    );
+
+    const codeBuildProject = new Project(
+      this,
+      `${projectPrefix}-rds-code-build`,
+      {
+        vpc: rdsVpc,
+        subnetSelection: { subnetType: SubnetType.PRIVATE_WITH_EGRESS },
+        securityGroups: [codeBuildSecurityGroup],
+        source: Source.gitHub({
+          owner: "shubomifashakin", //me
+          repo: "rgb_splitting", //the repository
+          branchOrRef: "rds_migration", //the branch this runs for
+        }),
+        environment: {
+          computeType: ComputeType.SMALL,
+        },
+
+        buildSpec: BuildSpec.fromAsset("./build_spec.yaml"),
+        projectName: `${projectPrefix}-rds-code-build`,
+        description:
+          "The essence of this code build is just to run our prisma migrations",
+        timeout: cdk.Duration.minutes(10),
+        queuedTimeout: cdk.Duration.minutes(10),
+      }
+    );
 
     const projectsTable = new Table(this, `${projectPrefix}-table-sh`, {
       tableName: `${projectPrefix}-table-sh`,
@@ -189,6 +317,9 @@ export class RgbSplittingStack extends cdk.Stack {
           REGION: this.region,
           BUCKET_NAME: s3Bucket.bucketName,
           TABLE_NAME: projectsTable.tableName,
+          DB_SECRET_ARN: newRdsDbSecret.secretArn,
+          DB_PORT: dbInstance.dbInstanceEndpointPort,
+          DB_HOST: dbInstance.dbInstanceEndpointAddress,
         },
         entry: "./resources/splitting-handler.ts",
         handler: "handler",
@@ -201,6 +332,11 @@ export class RgbSplittingStack extends cdk.Stack {
           sourceMap: true,
           minify: true,
           externalModules: ["canvas"], //since we included the canvas layer in our lambda, exclude the canvas module from bundling
+        },
+        vpc: rdsVpc,
+        securityGroups: [lambdaSecurityGroup],
+        vpcSubnets: {
+          subnetType: SubnetType.PRIVATE_WITH_EGRESS,
         },
       }
     );
@@ -220,9 +356,17 @@ export class RgbSplittingStack extends cdk.Stack {
           BUCKET_NAME: s3Bucket.bucketName,
           TABLE_NAME: projectsTable.tableName,
           MAX_PLAN_SIZES_SECRET_NAME: maxPlanSizesSecretName,
+          DB_SECRET_ARN: newRdsDbSecret.secretArn,
+          DB_PORT: dbInstance.dbInstanceEndpointPort,
+          DB_HOST: dbInstance.dbInstanceEndpointAddress,
         },
         entry: "./resources/generate-presigned-url.ts",
         handler: "handler",
+        vpc: rdsVpc,
+        securityGroups: [lambdaSecurityGroup],
+        vpcSubnets: {
+          subnetType: SubnetType.PRIVATE_WITH_EGRESS,
+        },
       }
     );
 
@@ -243,8 +387,16 @@ export class RgbSplittingStack extends cdk.Stack {
           PAYMENT_SECRET_NAME: paymentSecretName,
           WEBHOOK_SECRET_NAME: webhookSecretName,
           PAYMENT_GATEWAY_URL: paymentGatewayUrl,
+          DB_SECRET_ARN: newRdsDbSecret.secretArn,
+          DB_PORT: dbInstance.dbInstanceEndpointPort,
+          DB_HOST: dbInstance.dbInstanceEndpointAddress,
         },
         timeout: cdk.Duration.seconds(20),
+        vpc: rdsVpc,
+        securityGroups: [lambdaSecurityGroup],
+        vpcSubnets: {
+          subnetType: SubnetType.PRIVATE_WITH_EGRESS,
+        },
       }
     );
 
@@ -262,8 +414,16 @@ export class RgbSplittingStack extends cdk.Stack {
         environment: {
           REGION: this.region,
           TABLE_NAME: projectsTable.tableName,
+          DB_SECRET_ARN: newRdsDbSecret.secretArn,
+          DB_PORT: dbInstance.dbInstanceEndpointPort,
+          DB_HOST: dbInstance.dbInstanceEndpointAddress,
         },
         timeout: cdk.Duration.seconds(10),
+        vpc: rdsVpc,
+        securityGroups: [lambdaSecurityGroup],
+        vpcSubnets: {
+          subnetType: SubnetType.PRIVATE_WITH_EGRESS,
+        },
       }
     );
 
@@ -320,9 +480,17 @@ export class RgbSplittingStack extends cdk.Stack {
           AVAILABLE_PLANS_SECRET_NAME: availablePlansSecretName,
           RESUBSCRIBE_QUEUE_URL: resubscribeSubscriptionQueue.queueUrl,
           CANCEL_SUBSCRIPTION_QUEUE_URL: cancelSubscriptionQueue.queueUrl,
+          DB_SECRET_ARN: newRdsDbSecret.secretArn,
+          DB_PORT: dbInstance.dbInstanceEndpointPort,
+          DB_HOST: dbInstance.dbInstanceEndpointAddress,
         },
         timeout: cdk.Duration.minutes(2),
         recursiveLoop: RecursiveLoop.ALLOW, // got an email from aws thar my function was terminated, so i added this, the resubscribe lambda uses a recursive design
+        vpc: rdsVpc,
+        securityGroups: [lambdaSecurityGroup],
+        vpcSubnets: {
+          subnetType: SubnetType.PRIVATE_WITH_EGRESS,
+        },
       }
     );
 
@@ -340,8 +508,16 @@ export class RgbSplittingStack extends cdk.Stack {
           REGION: this.region,
           TABLE_NAME: projectsTable.tableName,
           AVAILABLE_PLANS_SECRET_NAME: availablePlansSecretName,
+          DB_SECRET_ARN: newRdsDbSecret.secretArn,
+          DB_PORT: dbInstance.dbInstanceEndpointPort,
+          DB_HOST: dbInstance.dbInstanceEndpointAddress,
         },
         timeout: cdk.Duration.seconds(45),
+        vpc: rdsVpc,
+        securityGroups: [lambdaSecurityGroup],
+        vpcSubnets: {
+          subnetType: SubnetType.PRIVATE_WITH_EGRESS,
+        },
       }
     );
 
@@ -849,6 +1025,17 @@ export class RgbSplittingStack extends cdk.Stack {
         },
       },
     });
+
+    codeBuildProject.addToRolePolicy(
+      new PolicyStatement({
+        actions: ["secretsmanager:GetSecretValue"],
+        resources: [
+          `arn:aws:secretsmanager:${this.region}:${
+            this.account
+          }:secret:${"RGB_RDS_DATABASE_URL"}*`,
+        ],
+      })
+    );
 
     maxPlanSizesSecret.grantRead(generatePresignedUrlLambda);
 

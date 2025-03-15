@@ -2,12 +2,19 @@ import { z } from "zod";
 
 import { normalizeChannel } from "../fns/channelsNormalization";
 
-import { Channels } from "../../types/channels";
-import { defaultChannel, defaultGrain } from "../constants";
+import { Channels, NormalizedChannels } from "../../types/channels";
+import {
+  default_grain,
+  default_normalized_channel,
+  defaultChannel,
+  defaultGrain,
+  maxInArray,
+} from "../constants";
 
 const possibleChannels = Object.values(Channels);
 
 //channels could either be a string or a string array
+//if the user sent just a string, use that string repeated 3 times, the want to use that channel for all channels
 //the resulting value will always bbe an array
 export const channelsValidator = z
   .union([
@@ -21,7 +28,7 @@ export const channelsValidator = z
     //it must be a non emoty array
     z
       .array(z.string().transform((val) => val.toLowerCase()))
-      .max(3)
+      .max(maxInArray)
       .refine(
         (arr) =>
           arr.every((val) => possibleChannels.includes(val as Channels)) &&
@@ -34,21 +41,23 @@ export const channelsValidator = z
   .default(defaultChannel);
 
 //grain could either be a number or a number array
-//the resulting value will be an array
-//if the user specified just a number and not an array, use that grain value for all the channels
-//if they specified an array, then just use that array
+//if the user sent just a number, use that number repeated 3 times, the want to use that grain value for all channels
+//the resulting value will be always be an array
 export const grainValidator = z
   .union([
     z.number().transform((val) => Math.min(255, val)),
 
     z
       .array(z.number().transform((val) => Math.min(255, val)))
-      .max(3)
+      .max(maxInArray)
       .refine((arr) => arr.length, {
         message: "No grain values provided in array",
       }),
   ])
-  .transform((val) => (Array.isArray(val) ? val : [val, val, val]))
+  .transform((val) =>
+    //if the value is a number, return an array of that number repeated 3 times
+    Array.isArray(val) ? val : Array.from({ length: 3 }, () => val)
+  )
   .optional()
   .default(defaultGrain);
 

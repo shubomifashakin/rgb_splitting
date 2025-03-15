@@ -35,5 +35,9 @@ export function normalizeChannel(input: string | string[]) {
     return foundNormalization;
   };
 
-  return Array.isArray(input) ? input.map(process) : [process(input)];
+  //if the input is an array, map over it and process each value
+  //if the input is a string, process it && return an array of that value repeated 3 times
+  return Array.isArray(input)
+    ? input.map(process)
+    : Array.from({ length: 3 }, () => process(input));
 }
