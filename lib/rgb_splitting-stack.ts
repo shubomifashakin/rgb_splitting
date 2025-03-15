@@ -1037,6 +1037,17 @@ export class RgbSplittingStack extends cdk.Stack {
       })
     );
 
+    //give codebuild permission to use connections
+    codeBuildProject.addToRolePolicy(
+      new PolicyStatement({
+        actions: [
+          "codeConnections:UseConnection",
+          "codeConnections:GetConnections",
+        ],
+        resources: ["*"],
+      })
+    );
+
     maxPlanSizesSecret.grantRead(generatePresignedUrlLambda);
 
     cancelSubscriptionQueue.grantSendMessages(resubscribeLambda);
