@@ -45,13 +45,14 @@ model Projects {
 model Images {
   id String @id @default(uuid())
 
-  url String[]
+  originalImage String @unique
+
+  urls    String[]
   grain   Int[]
   channel String[]
 
   projectId String
   Projects  Projects @relation(fields: [projectId], references: [id])
-
 
   createdAt DateTime @default(now())
 }
