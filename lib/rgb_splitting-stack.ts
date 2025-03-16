@@ -21,21 +21,21 @@ import {
   UsagePlan,
 } from "aws-cdk-lib/aws-apigateway";
 import { HttpMethod } from "aws-cdk-lib/aws-events";
-import { AttributeType, Table } from "aws-cdk-lib/aws-dynamodb";
 import { LambdaDestination } from "aws-cdk-lib/aws-s3-notifications";
 import { PolicyStatement, Role, ServicePrincipal } from "aws-cdk-lib/aws-iam";
 
 import * as dotenv from "dotenv";
+import * as rds from "aws-cdk-lib/aws-rds";
 import { Queue } from "aws-cdk-lib/aws-sqs";
 import { Secret } from "aws-cdk-lib/aws-secretsmanager";
 import { SqsEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
-import * as rds from "aws-cdk-lib/aws-rds";
 
 import { PlanType } from "../helpers/constants";
 import { Port, SecurityGroup, SubnetType, Vpc } from "aws-cdk-lib/aws-ec2";
 import {
   BuildSpec,
   ComputeType,
+  FilterGroup,
   Project,
   Source,
 } from "aws-cdk-lib/aws-codebuild";
@@ -176,6 +176,7 @@ export class RgbSplittingStack extends cdk.Stack {
       }
     );
 
+    //i only use this to handle my prisma migrations
     const codeBuildProject = new Project(
       this,
       `${projectPrefix}-rds-code-build`,
@@ -187,12 +188,19 @@ export class RgbSplittingStack extends cdk.Stack {
           owner: "shubomifashakin", //me
           repo: "rgb_splitting", //the repository
           branchOrRef: "rds_migration", //the branch this runs for
+          webhook: true,
+          webhookFilters: [
+            //trigger the build whenever the branch is updated
+            FilterGroup.inEventOf(
+              cdk.aws_codebuild.EventAction.PUSH
+            ).andBranchIs("rds_migration"),
+          ],
         }),
         environment: {
           computeType: ComputeType.SMALL,
         },
 
-        buildSpec: BuildSpec.fromAsset("./build_spec.yaml"),
+        buildSpec: BuildSpec.fromAsset("./buildspec.yml"),
         projectName: `${projectPrefix}-rds-code-build`,
         description:
           "The essence of this code build is just to run our prisma migrations",
@@ -201,50 +209,50 @@ export class RgbSplittingStack extends cdk.Stack {
       }
     );
 
-    const projectsTable = new Table(this, `${projectPrefix}-table-sh`, {
-      tableName: `${projectPrefix}-table-sh`,
-      partitionKey: {
-        name: "id",
-        type: AttributeType.STRING,
-      },
-      sortKey: {
-        name: "userId",
-        type: AttributeType.STRING,
-      },
-      pointInTimeRecoverySpecification: {
-        pointInTimeRecoveryEnabled: true,
-      },
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
-    });
+    // const projectsTable = new Table(this, `${projectPrefix}-table-sh`, {
+    //   tableName: `${projectPrefix}-table-sh`,
+    //   partitionKey: {
+    //     name: "id",
+    //     type: AttributeType.STRING,
+    //   },
+    //   sortKey: {
+    //     name: "userId",
+    //     type: AttributeType.STRING,
+    //   },
+    //   pointInTimeRecoverySpecification: {
+    //     pointInTimeRecoveryEnabled: true,
+    //   },
+    //   removalPolicy: cdk.RemovalPolicy.DESTROY,
+    // });
 
-    projectsTable.addGlobalSecondaryIndex({
-      indexName: "expiredSubscriptionIndex",
-      partitionKey: {
-        name: "sub_status",
-        type: AttributeType.STRING,
-      },
+    // projectsTable.addGlobalSecondaryIndex({
+    //   indexName: "expiredSubscriptionIndex",
+    //   partitionKey: {
+    //     name: "sub_status",
+    //     type: AttributeType.STRING,
+    //   },
 
-      sortKey: {
-        name: "nextPaymentDate",
-        type: AttributeType.NUMBER,
-      },
-    });
+    //   sortKey: {
+    //     name: "nextPaymentDate",
+    //     type: AttributeType.NUMBER,
+    //   },
+    // });
 
-    projectsTable.addGlobalSecondaryIndex({
-      indexName: "userIdIndex",
-      partitionKey: {
-        name: "userId",
-        type: AttributeType.STRING,
-      },
-    });
+    // projectsTable.addGlobalSecondaryIndex({
+    //   indexName: "userIdIndex",
+    //   partitionKey: {
+    //     name: "userId",
+    //     type: AttributeType.STRING,
+    //   },
+    // });
 
-    projectsTable.addGlobalSecondaryIndex({
-      indexName: "apiKeyIndex",
-      partitionKey: {
-        name: "apiKey",
-        type: AttributeType.STRING,
-      },
-    });
+    // projectsTable.addGlobalSecondaryIndex({
+    //   indexName: "apiKeyIndex",
+    //   partitionKey: {
+    //     name: "apiKey",
+    //     type: AttributeType.STRING,
+    //   },
+    // });
 
     //this queue is used to store messages that failed to be downgraded
     const cancelSubscriptionDeadLetterQueue = new Queue(
@@ -316,10 +324,16 @@ export class RgbSplittingStack extends cdk.Stack {
         environment: {
           REGION: this.region,
           BUCKET_NAME: s3Bucket.bucketName,
-          TABLE_NAME: projectsTable.tableName,
           DB_SECRET_ARN: newRdsDbSecret.secretArn,
           DB_PORT: dbInstance.dbInstanceEndpointPort,
           DB_HOST: dbInstance.dbInstanceEndpointAddress,
+          DB_USER: newRdsDbSecret
+            .secretValueFromJson("username")
+            .unsafeUnwrap(),
+          DB_PASSWORD: newRdsDbSecret
+            .secretValueFromJson("password")
+            .unsafeUnwrap(),
+          DB_NAME: newRdsDbSecret.secretValueFromJson("dbname").unsafeUnwrap(),
         },
         entry: "./resources/splitting-handler.ts",
         handler: "handler",
@@ -354,11 +368,17 @@ export class RgbSplittingStack extends cdk.Stack {
         environment: {
           REGION: this.region,
           BUCKET_NAME: s3Bucket.bucketName,
-          TABLE_NAME: projectsTable.tableName,
           MAX_PLAN_SIZES_SECRET_NAME: maxPlanSizesSecretName,
           DB_SECRET_ARN: newRdsDbSecret.secretArn,
           DB_PORT: dbInstance.dbInstanceEndpointPort,
           DB_HOST: dbInstance.dbInstanceEndpointAddress,
+          DB_USER: newRdsDbSecret
+            .secretValueFromJson("username")
+            .unsafeUnwrap(),
+          DB_PASSWORD: newRdsDbSecret
+            .secretValueFromJson("password")
+            .unsafeUnwrap(),
+          DB_NAME: newRdsDbSecret.secretValueFromJson("dbname").unsafeUnwrap(),
         },
         entry: "./resources/generate-presigned-url.ts",
         handler: "handler",
@@ -383,13 +403,19 @@ export class RgbSplittingStack extends cdk.Stack {
         handler: "handler",
         environment: {
           REGION: this.region,
-          TABLE_NAME: projectsTable.tableName,
           PAYMENT_SECRET_NAME: paymentSecretName,
           WEBHOOK_SECRET_NAME: webhookSecretName,
           PAYMENT_GATEWAY_URL: paymentGatewayUrl,
           DB_SECRET_ARN: newRdsDbSecret.secretArn,
           DB_PORT: dbInstance.dbInstanceEndpointPort,
           DB_HOST: dbInstance.dbInstanceEndpointAddress,
+          DB_USER: newRdsDbSecret
+            .secretValueFromJson("username")
+            .unsafeUnwrap(),
+          DB_PASSWORD: newRdsDbSecret
+            .secretValueFromJson("password")
+            .unsafeUnwrap(),
+          DB_NAME: newRdsDbSecret.secretValueFromJson("dbname").unsafeUnwrap(),
         },
         timeout: cdk.Duration.seconds(20),
         vpc: rdsVpc,
@@ -413,10 +439,16 @@ export class RgbSplittingStack extends cdk.Stack {
         handler: "handler",
         environment: {
           REGION: this.region,
-          TABLE_NAME: projectsTable.tableName,
           DB_SECRET_ARN: newRdsDbSecret.secretArn,
           DB_PORT: dbInstance.dbInstanceEndpointPort,
           DB_HOST: dbInstance.dbInstanceEndpointAddress,
+          DB_USER: newRdsDbSecret
+            .secretValueFromJson("username")
+            .unsafeUnwrap(),
+          DB_PASSWORD: newRdsDbSecret
+            .secretValueFromJson("password")
+            .unsafeUnwrap(),
+          DB_NAME: newRdsDbSecret.secretValueFromJson("dbname").unsafeUnwrap(),
         },
         timeout: cdk.Duration.seconds(10),
         vpc: rdsVpc,
@@ -474,7 +506,6 @@ export class RgbSplittingStack extends cdk.Stack {
         handler: "handler",
         environment: {
           REGION: this.region,
-          TABLE_NAME: projectsTable.tableName,
           PAYMENT_GATEWAY_URL: paymentGatewayUrl,
           PAYMENT_SECRET_NAME: paymentSecretName,
           AVAILABLE_PLANS_SECRET_NAME: availablePlansSecretName,
@@ -483,6 +514,13 @@ export class RgbSplittingStack extends cdk.Stack {
           DB_SECRET_ARN: newRdsDbSecret.secretArn,
           DB_PORT: dbInstance.dbInstanceEndpointPort,
           DB_HOST: dbInstance.dbInstanceEndpointAddress,
+          DB_USER: newRdsDbSecret
+            .secretValueFromJson("username")
+            .unsafeUnwrap(),
+          DB_PASSWORD: newRdsDbSecret
+            .secretValueFromJson("password")
+            .unsafeUnwrap(),
+          DB_NAME: newRdsDbSecret.secretValueFromJson("dbname").unsafeUnwrap(),
         },
         timeout: cdk.Duration.minutes(2),
         recursiveLoop: RecursiveLoop.ALLOW, // got an email from aws thar my function was terminated, so i added this, the resubscribe lambda uses a recursive design
@@ -506,13 +544,49 @@ export class RgbSplittingStack extends cdk.Stack {
         handler: "handler",
         environment: {
           REGION: this.region,
-          TABLE_NAME: projectsTable.tableName,
           AVAILABLE_PLANS_SECRET_NAME: availablePlansSecretName,
-          DB_SECRET_ARN: newRdsDbSecret.secretArn,
+          DB_USER: newRdsDbSecret
+            .secretValueFromJson("username")
+            .unsafeUnwrap(),
+          DB_PASSWORD: newRdsDbSecret
+            .secretValueFromJson("password")
+            .unsafeUnwrap(),
+          DB_NAME: newRdsDbSecret.secretValueFromJson("dbname").unsafeUnwrap(),
           DB_PORT: dbInstance.dbInstanceEndpointPort,
           DB_HOST: dbInstance.dbInstanceEndpointAddress,
         },
         timeout: cdk.Duration.seconds(45),
+        vpc: rdsVpc,
+        securityGroups: [lambdaSecurityGroup],
+        vpcSubnets: {
+          subnetType: SubnetType.PRIVATE_WITH_EGRESS,
+        },
+      }
+    );
+
+    const getProcessedImagesLambda = new NodejsFunction(
+      this,
+      `${projectPrefix}-get-processed-images-lambda`,
+      {
+        functionName: `${projectPrefix}-get-processed-images-lambda`,
+        description:
+          "This lambda is used to get processed images for an image that was uploaded.",
+        runtime: Runtime.NODEJS_22_X,
+        entry: "./resources/get-processed-images.ts",
+        handler: "handler",
+        environment: {
+          REGION: this.region,
+          DB_USER: newRdsDbSecret
+            .secretValueFromJson("username")
+            .unsafeUnwrap(),
+          DB_PASSWORD: newRdsDbSecret
+            .secretValueFromJson("password")
+            .unsafeUnwrap(),
+          DB_NAME: newRdsDbSecret.secretValueFromJson("dbname").unsafeUnwrap(),
+          DB_PORT: dbInstance.dbInstanceEndpointPort,
+          DB_HOST: dbInstance.dbInstanceEndpointAddress,
+        },
+        timeout: cdk.Duration.seconds(15),
         vpc: rdsVpc,
         securityGroups: [lambdaSecurityGroup],
         vpcSubnets: {
@@ -816,6 +890,11 @@ export class RgbSplittingStack extends cdk.Stack {
     //route to request payments
     const triggerChargeRoute = v1Root.addResource("trigger-payment");
 
+    //route to get processed images
+    const baseProcessedImagesRoute = v1Root.addResource("images");
+    const getProcessedImagesRoute =
+      baseProcessedImagesRoute.addResource("{imageId}");
+
     generatePresignedUrlRoute.addMethod(
       HttpMethod.POST,
       new LambdaIntegration(generatePresignedUrlLambda),
@@ -841,6 +920,12 @@ export class RgbSplittingStack extends cdk.Stack {
     triggerChargeRoute.addMethod(
       HttpMethod.POST,
       new LambdaIntegration(triggerChargeLambda)
+    );
+
+    getProcessedImagesRoute.addMethod(
+      HttpMethod.GET,
+      new LambdaIntegration(getProcessedImagesLambda),
+      { apiKeyRequired: true }
     );
 
     //construct the prod stage ARN
@@ -1043,6 +1128,7 @@ export class RgbSplittingStack extends cdk.Stack {
         actions: [
           "codeConnections:UseConnection",
           "codeConnections:GetConnections",
+          "codebuild:ImportSourceCredentials",
         ],
         resources: ["*"],
       })
@@ -1067,14 +1153,14 @@ export class RgbSplittingStack extends cdk.Stack {
       new LambdaDestination(splittingLambda)
     );
 
-    projectsTable.grantReadWriteData(webHookLambda);
-    projectsTable.grantReadWriteData(resubscribeLambda);
-    projectsTable.grantReadData(generatePresignedUrlLambda);
+    // projectsTable.grantReadWriteData(webHookLambda);
+    // projectsTable.grantReadWriteData(resubscribeLambda);
+    // projectsTable.grantReadData(generatePresignedUrlLambda);
 
-    projectsTable.grantWriteData(splittingLambda);
+    // projectsTable.grantWriteData(splittingLambda);
 
-    projectsTable.grantReadData(getUsersApiKeysLambda);
+    // projectsTable.grantReadData(getUsersApiKeysLambda);
 
-    projectsTable.grantReadWriteData(cancelSubscriptionLambda);
+    // projectsTable.grantReadWriteData(cancelSubscriptionLambda);
   }
 }

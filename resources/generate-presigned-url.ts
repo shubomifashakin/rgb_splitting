@@ -8,6 +8,7 @@ import {
   SecretsManagerClient,
 } from "@aws-sdk/client-secrets-manager";
 
+import { Pool } from "pg";
 import { v4 as uuid } from "uuid";
 
 import {
@@ -21,6 +22,13 @@ import { planSizesValidator } from "../helpers/schemaValidator/planSizesValidato
 const region = process.env.REGION!;
 const s3Bucket = process.env.BUCKET_NAME!;
 const tableName = process.env.TABLE_NAME!;
+
+const dbPort = process.env.DB_PORT!;
+const dbHost = process.env.DB_HOST!;
+const dbUser = process.env.DB_USER!;
+const dbName = process.env.DB_NAME!;
+const dbPassword = process.env.DB_PASSWORD!;
+
 const maxPlanSizesSecretName = process.env.MAX_PLAN_SIZES_SECRET_NAME!;
 
 const s3 = new S3Client({
@@ -29,6 +37,8 @@ const s3 = new S3Client({
 const ddbClient = new DynamoDBClient({ region });
 const secretClient = new SecretsManagerClient({ region });
 const dynamoClient = DynamoDBDocumentClient.from(ddbClient);
+
+let pool: Pool | undefined;
 
 export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
   const headers = {
@@ -45,6 +55,17 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
       }),
       headers,
     };
+  }
+
+  if (!pool) {
+    pool = new Pool({
+      host: dbHost,
+      user: dbUser,
+      password: dbPassword,
+      database: dbName,
+      port: Number(dbPort),
+      ssl: { rejectUnauthorized: false },
+    });
   }
 
   const body = JSON.parse(event.body);
@@ -88,18 +109,11 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
 
   //get the project the apikey is attached to && the maxPlan sizes from secret manager
   const [project, maxPlanSizes] = await Promise.all([
-    dynamoClient.send(
-      new QueryCommand({
-        TableName: tableName,
-        KeyConditionExpression: "apiKey = :apiKey",
-        IndexName: "apiKeyIndex",
-        ExpressionAttributeValues: {
-          ":apiKey": apiKey,
-        },
-        ProjectionExpression: "id, userId, currentPlan, projectName",
-        Limit: 1,
-      })
+    pool.query(
+      `SELECT id, "userId", "projectName", "currentPlan" FROM "Projects" WHERE "apiKey" = $1`,
+      [apiKey]
     ),
+
     secretClient.send(
       new GetSecretValueCommand({
         SecretId: maxPlanSizesSecretName,
@@ -107,13 +121,15 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     ),
   ]);
 
+  console.log(project);
+
   if (!maxPlanSizes.SecretString) {
     console.error("Max plan size secret is empty");
 
     throw new Error("Max plan size secret is empty");
   }
 
-  if (!project.Items || !project.Items.length) {
+  if (!project.rowCount) {
     return {
       statusCode: 404,
       body: JSON.stringify({
@@ -123,11 +139,11 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     };
   }
 
-  const projectData = project.Items[0];
+  const projectInfo = project.rows[0];
 
   //if a free user tried to get multiple channels or grains from an image, shut it down. you not paying enough my g 🤷‍♂️
   if (
-    projectData.currentPlan === PlanType.Free &&
+    projectInfo.currentPlan === PlanType.Free &&
     (channels.length > 1 || grain.length > 1)
   ) {
     return {
@@ -188,14 +204,16 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
         [
           "content-length-range",
           1,
-          maxSizesData[projectData.currentPlan as keyof typeof maxSizesData],
+          maxSizesData[
+            project.rows[0].currentPlan as keyof typeof maxSizesData
+          ],
         ], //the content length should not exceed this rAnge
 
         ["eq", "$x-amz-meta-grain", grainValue],
         ["eq", "$x-amz-meta-channels", channelsValue],
-        ["eq", "$x-amz-meta-project_id", projectData.id],
-        ["eq", "$x-amz-meta-user_id", projectData.userId],
-        ["eq", "$x-amz-meta-project_name", projectData.projectName],
+        ["eq", "$x-amz-meta-project_id", projectInfo.id],
+        ["eq", "$x-amz-meta-user_id", projectInfo.userId],
+        ["eq", "$x-amz-meta-project_name", projectInfo.projectName],
       ],
 
       //other fields that we want returned with the url, they must be attached to the formdata
@@ -203,16 +221,15 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
       Fields: {
         "x-amz-meta-grain": grainValue,
         "x-amz-meta-channels": channelsValue,
-        "x-amz-meta-project_id": projectData.id,
-        "x-amz-meta-user_id": projectData.userId,
-        "x-amz-meta-project_name": projectData.projectName,
+        "x-amz-meta-project_id": projectInfo.id,
+        "x-amz-meta-user_id": projectInfo.userId,
+        "x-amz-meta-project_name": projectInfo.projectName,
       },
 
       Expires: 180,
     });
 
-    //create a record in another db, the key of the image should be the id
-    //then return the poll url, which should be a get endpoint like this .../image/{id} id being the image key
+    console.log("completed successfully");
 
     return { statusCode: 200, body: JSON.stringify({ url, fields }), headers };
   } catch (error: unknown) {

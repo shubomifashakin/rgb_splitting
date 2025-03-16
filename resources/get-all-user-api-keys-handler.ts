@@ -3,15 +3,15 @@ import {
   APIGatewayProxyEventV2,
 } from "aws-lambda";
 
-import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { Pool } from "pg";
 
-const region = process.env.REGION;
-const tableName = process.env.TABLE_NAME;
+const dbHost = process.env.DB_HOST!;
+const dbUser = process.env.DB_USER!;
+const dbName = process.env.DB_NAME!;
+const dbPort = process.env.DB_PORT!;
+const dbPassword = process.env.DB_PASSWORD!;
 
-const client = new DynamoDBClient({ region });
-
-const dynamo = DynamoDBDocumentClient.from(client);
+let pool: Pool | undefined;
 
 interface CustomAPIGatewayEventV2 extends APIGatewayProxyEventV2 {
   requestContext: APIGatewayEventRequestContextV2 & {
@@ -30,23 +30,27 @@ export const handler = async (event: CustomAPIGatewayEventV2) => {
 
   const userId = event.requestContext.authorizer.principalId;
 
+  if (!pool) {
+    pool = new Pool({
+      host: dbHost,
+      user: dbUser,
+      password: dbPassword,
+      database: dbName,
+      port: Number(dbPort),
+      ssl: { rejectUnauthorized: false },
+    });
+  }
+
   //TODO: PAGINATE THIS, ONLY 10 AT ONCE
   try {
-    const usersApiKeys = await dynamo.send(
-      new QueryCommand({
-        TableName: tableName,
-        IndexName: "userIdIndex",
-        KeyConditionExpression: "userId = :userId",
-        ExpressionAttributeValues: {
-          ":userId": userId,
-        },
-        Limit: 10,
-        ScanIndexForward: false,
-        ProjectionExpression: "createdAt, apiKeyInfo.apiKey, id, projectName",
-      })
+    const keys = await pool.query(
+      `SELECT id, "apiKey", "createdAt" , "projectName", "currentPlan" FROM "Projects" WHERE "userId" = $1 ORDER BY "createdAt" DESC LIMIT 10`,
+      [userId]
     );
 
-    return { statusCode: 200, body: JSON.stringify(usersApiKeys.Items) };
+    console.log("completed successfully");
+
+    return { statusCode: 200, body: JSON.stringify(keys.rows) };
   } catch (error: unknown) {
     console.log("FAILED TO GET USERS API KEYS FROM DB", error);
 

@@ -3,7 +3,6 @@ import {
   GetSecretValueCommand,
   SecretsManagerClient,
 } from "@aws-sdk/client-secrets-manager";
-import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import {
   APIGatewayClient,
   CreateUsagePlanKeyCommand,
@@ -12,11 +11,7 @@ import {
   NotFoundException,
 } from "@aws-sdk/client-api-gateway";
 
-import {
-  DynamoDBDocumentClient,
-  GetCommand,
-  UpdateCommand,
-} from "@aws-sdk/lib-dynamodb";
+import { Pool } from "pg";
 
 import { ExpiredProject } from "../types/expiredSubscriptionProjectInfo";
 
@@ -24,11 +19,12 @@ import { usagePlanValidator } from "../helpers/schemaValidator/validators";
 import { PlanType } from "../helpers/constants";
 
 const region = process.env.REGION!;
-const tableName = process.env.TABLE_NAME!;
+const dbHost = process.env.DB_HOST!;
+const dbUser = process.env.DB_USER!;
+const dbName = process.env.DB_NAME!;
+const dbPort = process.env.DB_PORT!;
+const dbPassword = process.env.DB_PASSWORD!;
 const usagePlanSecretName = process.env.AVAILABLE_PLANS_SECRET_NAME!;
-
-const client = new DynamoDBClient({ region });
-const dynamo = DynamoDBDocumentClient.from(client);
 
 const apiGatewayClient = new APIGatewayClient({
   region,
@@ -38,11 +34,26 @@ const secretClient = new SecretsManagerClient({
   region,
 });
 
+let pool: Pool | undefined;
+
 //if a message fails to process, mark is as failed
 export const handler = async (event: SQSEvent): Promise<SQSBatchResponse> => {
   const cancelledProjects = event.Records;
 
   const batchItemFailures: SQSBatchItemFailure[] = [];
+
+  console.log("started", cancelledProjects);
+
+  if (!pool) {
+    pool = new Pool({
+      host: dbHost,
+      user: dbUser,
+      password: dbPassword,
+      database: dbName,
+      port: Number(dbPort),
+      ssl: { rejectUnauthorized: false },
+    });
+  }
 
   await Promise.allSettled(
     cancelledProjects.map(async (project) => {
@@ -52,21 +63,11 @@ export const handler = async (event: SQSEvent): Promise<SQSBatchResponse> => {
         console.log("Processing project", {
           projectId: projectInfo.id,
           userId: projectInfo.userId,
+          userEmail: projectInfo.userEmail,
         });
 
-        //find the project
-        const existingProject = await dynamo.send(
-          new GetCommand({
-            TableName: tableName,
-            Key: { id: projectInfo.id, userId: projectInfo.userId },
-            ProjectionExpression: "apiKeyInfo",
-          })
-        );
-
-        if (!existingProject.Item) {
-          throw new Error(
-            `Project not found for ${projectInfo.email}, projectId ${projectInfo.id}`
-          );
+        if (!pool) {
+          throw new Error("Pool not initialized");
         }
 
         //get all the available usagePlanIds
@@ -161,17 +162,13 @@ export const handler = async (event: SQSEvent): Promise<SQSBatchResponse> => {
           );
         }
 
-        await dynamo.send(
-          new UpdateCommand({
-            TableName: tableName,
-            Key: { id: projectInfo.id, userId: projectInfo.userId },
-            UpdateExpression:
-              "set apiKeyInfo.usagePlanId = :usagePlanId, currentPlan = :planName",
-            ExpressionAttributeValues: {
-              ":planName": PlanType.Free,
-              ":usagePlanId": allUsagePlans.free,
-            },
-          })
+        await pool.query(
+          `UPDATE "Projects" SET "currentPlan" = $1, "apiKeyInfo" = $2 WHERE id = $3`,
+          [
+            PlanType.Free,
+            { ...projectInfo.apiKeyInfo, usagePlanId: allUsagePlans.free },
+            projectInfo.id,
+          ]
         );
 
         //send a message to the user stating that they have been downgraded

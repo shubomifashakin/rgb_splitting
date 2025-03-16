@@ -6,20 +6,24 @@ import {
   S3Client,
 } from "@aws-sdk/client-s3";
 
+import { Pool } from "pg";
 import { createCanvas, loadImage } from "canvas";
 
 import { processImage } from "../processImageFns/processImage";
 
 import { s3ImageMetadataValidator } from "../helpers/schemaValidator/s3ImageMetadataValidator";
-import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 
 const region = process.env.REGION!;
-const tableName = process.env.TABLE_NAME!;
+
+const dbHost = process.env.DB_HOST!;
+const dbUser = process.env.DB_USER!;
+const dbName = process.env.DB_NAME!;
+const dbPort = process.env.DB_PORT!;
+const dbPassword = process.env.DB_PASSWORD!;
 
 const s3client = new S3Client({ region });
-const ddbClient = new DynamoDBClient({ region });
-const dynamoClient = DynamoDBDocumentClient.from(ddbClient);
+
+let pool: Pool | undefined;
 
 export const handler: Handler = async (event: S3Event) => {
   try {
@@ -29,14 +33,28 @@ export const handler: Handler = async (event: S3Event) => {
       throw new Error("No records found");
     }
 
+    if (!pool) {
+      pool = new Pool({
+        host: dbHost,
+        user: dbUser,
+        password: dbPassword,
+        database: dbName,
+        port: Number(dbPort),
+        ssl: { rejectUnauthorized: false },
+      });
+    }
+
     const imageInfo = event.Records[0];
     console.log(imageInfo, "image info");
+
+    const imageKey = imageInfo.s3.object.key;
+    const imageBucket = imageInfo.s3.bucket.name;
 
     //get the image from s3
     const s3Image = await s3client.send(
       new GetObjectCommand({
-        Bucket: imageInfo.s3.bucket.name,
-        Key: imageInfo.s3.object.key,
+        Key: imageKey,
+        Bucket: imageBucket,
       })
     );
 
@@ -80,8 +98,8 @@ export const handler: Handler = async (event: S3Event) => {
       imageData,
       channels,
       grains: grain,
-      keyPrefix: imageInfo.s3.object.key,
-      bucketName: imageInfo.s3.bucket.name,
+      keyPrefix: imageKey,
+      bucketName: imageBucket,
     });
 
     for (let i = 0; i < images.length; i++) {
@@ -96,46 +114,41 @@ export const handler: Handler = async (event: S3Event) => {
         new PutObjectCommand({
           Body: buffer,
           ContentType: "image/jpeg",
-          Bucket: imageInfo.s3.bucket.name,
+          Bucket: imageBucket,
           Key: processedInfo[i].key,
         })
       );
     }
 
-    //store the red green & blue images in the users in dynamo db for that particular api key that was used, and also include the date
-    await dynamoClient.send(
-      new UpdateCommand({
-        TableName: tableName,
-        Key: {
-          id: data.project_id,
-          userId: data.user_id,
-        },
-        ExpressionAttributeValues: {
-          ":processedImages": [
-            {
-              createdAt: Date.now(),
-              images: processedInfo,
-              originalKey: imageInfo.s3.object.key,
-              originalUrl: `https://${imageInfo.s3.bucket.name}.s3.us-east-1.amazonaws.com/${imageInfo.s3.object.key}`,
-            },
-          ],
-          ":emptyList": [],
-        },
-        UpdateExpression:
-          "set processedImages = list_append(if_not_exists(processedImages, :emptyList), :processedImages)",
-      })
+    const processedImages = processedInfo.map((processedImage) => {
+      return {
+        url: processedImage.url,
+        grain: processedImage.grain,
+        channels: processedImage.channel,
+      };
+    });
+
+    console.log(processedImages);
+
+    await pool.query(
+      `INSERT INTO "Images" ("projectId", "results", "originalImageUrl", "createdAt", "id") VALUES ($1, $2, $3, $4, $5)`,
+      [
+        data.project_id,
+        processedImages,
+        `https://${imageBucket}.s3.us-east-1.amazonaws.com/${imageKey}`,
+        new Date(),
+        imageKey, //use the key of the original image as the id
+      ]
     );
-    console.log(images, "images");
+
+    console.log("completed successfully");
 
     return;
   } catch (error: unknown) {
     console.log(error);
 
     if (error instanceof Error) {
-      return {
-        statusCode: 400,
-        body: JSON.stringify({ message: error.message, status: "fail" }),
-      };
+      console.log(error.message);
     }
 
     //so it can be caught by alarm

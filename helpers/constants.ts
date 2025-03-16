@@ -6,6 +6,11 @@ export enum PlanType {
   Executive = "executive",
 }
 
+export enum Status {
+  Active = "active",
+  Inactive = "inactive",
+}
+
 export const maxInArray = 3;
 export const default_grain = 0;
 export const default_channel = Channels.RGB;

@@ -28,7 +28,7 @@ interface Data {
   processor_response: string;
 }
 
-interface Card {
+export interface Card {
   type: string;
   token: string;
   expiry: string;

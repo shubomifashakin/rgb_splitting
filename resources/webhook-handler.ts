@@ -8,14 +8,9 @@ import {
   GetSecretValueCommand,
   SecretsManagerClient,
 } from "@aws-sdk/client-secrets-manager";
-import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { APIGatewayProxyEventV2, Handler } from "aws-lambda";
-import {
-  DynamoDBDocumentClient,
-  PutCommand,
-  UpdateCommand,
-  GetCommand,
-} from "@aws-sdk/lib-dynamodb";
+
+import { Pool } from "pg";
 
 import { v4 as uuid } from "uuid";
 
@@ -23,19 +18,22 @@ import {
   webHookEventValidator,
   ChargeCompletedData,
 } from "../types/webHookEventTypes";
+import { ApiKeyInfo } from "../types/apiKeyInfo";
 import { ChargeVerificationStatus } from "../types/chargeVerificationStatus";
 
+import { Status } from "../helpers/constants";
 import { getOneMonthFromNow } from "../helpers/fns/oneMonthFromNow";
 
 const region = process.env.REGION;
-const tableName = process.env.TABLE_NAME;
 const paymentGatewayUrl = process.env.PAYMENT_GATEWAY_URL!;
 const paymentGatewaySecretName = process.env.PAYMENT_SECRET_NAME!;
 const webhookEventVerifierSecretName = process.env.WEBHOOK_SECRET_NAME!;
 
-const client = new DynamoDBClient({ region });
-
-const dynamo = DynamoDBDocumentClient.from(client);
+const dbHost = process.env.DB_HOST!;
+const dbUser = process.env.DB_USER!;
+const dbName = process.env.DB_NAME!;
+const dbPort = process.env.DB_PORT!;
+const dbPassword = process.env.DB_PASSWORD!;
 
 const apiGatewayClient = new APIGatewayClient({
   region,
@@ -45,6 +43,8 @@ const secretClient = new SecretsManagerClient({
   region,
 });
 
+let pool: Pool | undefined;
+
 export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
   if (!event.body) {
     return {
@@ -53,6 +53,17 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
         message: "Bad Request - No body",
       }),
     };
+  }
+
+  if (!pool) {
+    pool = new Pool({
+      host: dbHost,
+      user: dbUser,
+      password: dbPassword,
+      database: dbName,
+      port: Number(dbPort),
+      ssl: { rejectUnauthorized: false },
+    });
   }
 
   const body = JSON.parse(event.body);
@@ -147,18 +158,12 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
       }
 
       //check if the project already exists in the database
-      const existingProject = await dynamo.send(
-        new GetCommand({
-          TableName: tableName,
-          Key: {
-            id: webHookEvent.meta_data.projectId,
-            userId: webHookEvent.meta_data.userId,
-          },
-          ProjectionExpression: "apiKeyInfo, userId, createdAt",
-        })
+      const existingProject = await pool.query(
+        `SELECT id, "apiKeyInfo" FROM "Projects" WHERE id = $1`,
+        [webHookEvent.meta_data.projectId]
       );
 
-      if (!existingProject.Item) {
+      if (!existingProject.rowCount) {
         const apiKey = await apiGatewayClient.send(
           new CreateApiKeyCommand({
             value: uuid(),
@@ -186,32 +191,46 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
           })
         );
 
-        await dynamo.send(
-          new PutCommand({
-            TableName: tableName,
-            Item: {
-              sub_status: "active",
-              email: eventData.customer.email,
-              id: webHookEvent.meta_data.projectId,
-              userId: webHookEvent.meta_data.userId,
-              projectName: webHookEvent.meta_data.projectName,
-              nextPaymentDate: getOneMonthFromNow(), //TODO: CHANGE TO ONE MONTH FROM NOW
-              currentBillingDate: new Date(eventData.created_at).getTime(),
-              createdAt: new Date(eventData.created_at).getTime(),
-              currentPlan: webHookEvent.meta_data.planName,
-              apiKey: apiKey.value,
-              apiKeyInfo: {
-                apiKeyId: apiKey.id,
-                apiKey: apiKey.value,
-                usagePlanId: webHookEvent.meta_data.usagePlanId,
-              },
-              cardTokenInfo: {
-                token: chargeVerificationRes.data.card.token,
-                expiry: chargeVerificationRes.data.card.expiry,
-              },
-            },
-          })
+        const apiKeyInfo = {
+          apiKeyId: apiKey.id,
+          usagePlanId: webHookEvent.meta_data.usagePlanId,
+        };
+
+        const cardInfo = {
+          token: chargeVerificationRes.data.card.token,
+          expiry: chargeVerificationRes.data.card.expiry,
+        };
+
+        //check if the user exists
+        const userExists = await pool.query(
+          `SELECT id FROM "Users" WHERE id = $1`,
+          [webHookEvent.meta_data.userId]
         );
+
+        if (!userExists.rowCount) {
+          const createUserQuery = `INSERT INTO "Users"(id, email) VALUES($1, $2) RETURNING id`;
+          await pool.query(createUserQuery, [
+            webHookEvent.meta_data.userId,
+            eventData.customer.email,
+          ]);
+        }
+
+        const createProjectQueryText = `INSERT INTO "Projects"(id, "userId", "projectName", "currentPlan", "apiKey", "apiKeyInfo", "cardInfo", "status", "currentBillingDate", "nextPaymentDate", "createdAt") VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`;
+        await pool.query(createProjectQueryText, [
+          webHookEvent.meta_data.projectId,
+          webHookEvent.meta_data.userId,
+          webHookEvent.meta_data.projectName,
+          webHookEvent.meta_data.planName,
+          apiKey.value,
+          apiKeyInfo,
+          cardInfo,
+          Status.Active,
+          new Date(eventData.created_at),
+          getOneMonthFromNow(), //TODO: CHANGE TO ONE MONTH FROM NOW
+          new Date(eventData.created_at),
+        ]);
+
+        console.log("completed successfully");
 
         return {
           statusCode: 200,
@@ -219,18 +238,19 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
         };
       }
 
+      console.log("resubscription");
+
+      const apiKeyInfo = existingProject.rows[0].apiKeyInfo as ApiKeyInfo;
+
       //if there is an existing project, update the next payment date
-      //if they changed their plan, update the usage plan
-      if (
-        existingProject.Item.apiKeyInfo.usagePlanId !==
-        webHookEvent.meta_data.usagePlanId
-      ) {
+      // & if they changed their plan, update the usage plan
+      if (apiKeyInfo.usagePlanId !== webHookEvent.meta_data.usagePlanId) {
         //CANT RUN IN PARALLEl BECAUSE AN APIKEY CAN ONLY BELONG TO 1 USAGE PLAN AT A TIME
         //remove the user from the old usage plan
         await apiGatewayClient.send(
           new DeleteUsagePlanKeyCommand({
-            usagePlanId: existingProject.Item.apiKeyInfo.usagePlanId,
-            keyId: existingProject.Item.apiKeyInfo.apiKeyId,
+            usagePlanId: apiKeyInfo.usagePlanId,
+            keyId: apiKeyInfo.apiKeyId,
           })
         );
 
@@ -238,30 +258,23 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
         await apiGatewayClient.send(
           new CreateUsagePlanKeyCommand({
             usagePlanId: webHookEvent.meta_data.usagePlanId,
-            keyId: existingProject.Item.apiKeyInfo.apiKeyId,
+            keyId: apiKeyInfo.apiKeyId,
             keyType: "API_KEY",
           })
         );
       }
 
-      await dynamo.send(
-        new UpdateCommand({
-          TableName: tableName,
-          Key: {
-            id: webHookEvent.meta_data.projectId,
-            userId: webHookEvent.meta_data.userId,
-          },
-          UpdateExpression:
-            "set nextPaymentDate = :currentTimestamp, currentBillingDate = :currentBillingDate, apiKeyInfo.usagePlanId = :usagePlanId, currentPlan = :planName",
-          ExpressionAttributeValues: {
-            ":currentTimestamp": getOneMonthFromNow(), //TODO: CHANGE TO ONE MONTH FROM NOW
-            ":currentBillingDate": new Date(eventData.created_at).getTime(),
-            ":usagePlanId": webHookEvent.meta_data.usagePlanId,
-            ":planName": webHookEvent.meta_data.planName,
-          },
-        })
-      );
+      const updateProjectQueryText = `UPDATE "Projects" SET "nextPaymentDate" = $1, "currentBillingDate" = $2, "apiKeyInfo" = $3, "currentPlan" = $4 WHERE id = $5`;
+      await pool.query(updateProjectQueryText, [
+        getOneMonthFromNow(), //TODO: CHANGE TO ONE MONTH FROM NOW
+        new Date(eventData.created_at),
+        { ...apiKeyInfo, usagePlanId: webHookEvent.meta_data.usagePlanId },
+        webHookEvent.meta_data.planName,
+        webHookEvent.meta_data.projectId,
+      ]);
     }
+
+    console.log("completed successfully");
 
     return {
       statusCode: 200,

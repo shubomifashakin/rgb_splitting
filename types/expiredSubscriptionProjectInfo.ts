@@ -1,18 +1,17 @@
 export interface ExpiredProject {
   id: string;
-  email: string;
   userId: string;
+  userEmail: string;
   projectName: string;
-  nextPaymentDate: number;
   currentPlan: string;
+  nextPaymentDate: Date;
 
   apiKeyInfo: {
-    apiKey: string;
     apiKeyId: string;
     usagePlanId: string;
   };
 
-  cardTokenInfo: {
+  cardInfo: {
     token: string;
     expiry: string;
   };
