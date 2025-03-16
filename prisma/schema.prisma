@@ -45,15 +45,13 @@ model Projects {
 model Images {
   id String @id @default(uuid())
 
-  grain   String
-  channel String
+  url String[]
+  grain   Int[]
+  channel String[]
 
   projectId String
   Projects  Projects @relation(fields: [projectId], references: [id])
 
-
-processedImages Json[]
-  
 
   createdAt DateTime @default(now())
 }
