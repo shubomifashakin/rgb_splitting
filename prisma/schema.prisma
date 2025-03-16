@@ -19,46 +19,52 @@ enum Status {
   cancelled
 }
 
+model Users {
+  id    String @id
+  email String @unique
+
+  Projects Projects[]
+
+  createdAt DateTime @default(now())
+}
+
 model Projects {
   id   String @id @default(uuid())
-  user Users  @relation(fields: [userId], references: [id])
+  user Users  @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   userId      String
   projectName String
 
-  apiKey String @unique
-
-  nextPaymentDate    DateTime
-  currentBillingDate DateTime
-  createdAt          DateTime @default(now())
-
+  
   status      Status
   currentPlan PlanType
 
   cardInfo   Json
   apiKeyInfo Json
 
+
+  apiKey String @unique
+
+  nextPaymentDate    DateTime
+  currentBillingDate DateTime
+
   Images Images[]
+
+  createdAt DateTime @default(now())
 }
 
 model Images {
   id String @id @default(uuid())
 
-  originalImage String @unique
+  originalImageKey String @unique
 
-  urls    String[]
-  grain   Int[]
-  channel String[]
+  originalImageUrl String @unique
 
+  results Json
+
+  Projects  Projects @relation(fields: [projectId], references: [id], onDelete: Cascade)
   projectId String
-  Projects  Projects @relation(fields: [projectId], references: [id])
 
   createdAt DateTime @default(now())
 }
 
-model Users {
-  id    String @id
-  email String @unique
-
-  Projects Projects[]
-}
