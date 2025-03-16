@@ -13,5 +13,5 @@ phases:
 
   build:
     commands:
-      # - npx prisma migrate reset --force
-      - npx prisma migrate dev --name "update_images_table"
+      - npx prisma migrate reset --force
+      # - npx prisma migrate dev --name "update_images_table"
