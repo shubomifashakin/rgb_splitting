@@ -19,29 +19,18 @@ enum Status {
   cancelled
 }
 
-model Users {
-  id    String @id
-  email String @unique
-
-  Projects Projects[]
-
-  createdAt DateTime @default(now())
-}
 
 model Projects {
   id   String @id @default(uuid())
-  user Users  @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   userId      String
   projectName String
 
-  
   status      Status
   currentPlan PlanType
 
   cardInfo   Json
   apiKeyInfo Json
-
 
   apiKey String @unique
 
@@ -51,11 +40,13 @@ model Projects {
   Images Images[]
 
   createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([status, nextPaymentDate, currentPlan])
 }
 
 model Images {
   id String @id
-
 
   originalImageUrl String @unique
 
@@ -66,4 +57,3 @@ model Images {
 
   createdAt DateTime @default(now())
 }
-
