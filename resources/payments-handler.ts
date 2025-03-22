@@ -59,7 +59,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
         title: "Rgbreak",
       },
       meta: {
-        projectId: data.projectId ? data.projectId : uuid(),
+        projectId: data.projectId ? data.projectId : "",
         userId: data.userId,
         planName: data.planName,
         usagePlanId: chosenUsagePlan,

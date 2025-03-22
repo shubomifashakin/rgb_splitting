@@ -8,6 +8,10 @@ import { validatePlan } from "../helpers/fns/validatePlan";
 
 import { ExpiredProject } from "../types/expiredSubscriptionProjectInfo";
 import { CardInfo } from "../types/cardInfo";
+import {
+  GetSecretValueCommand,
+  SecretsManagerClient,
+} from "@aws-sdk/client-secrets-manager";
 
 const region = process.env.REGION!;
 const paymentGatewayUrl = process.env.PAYMENT_GATEWAY_URL!;
@@ -17,12 +21,11 @@ const resubscribeQueueUrl = process.env.RESUBSCRIBE_QUEUE_URL!;
 const cancelSubscriptionQueueUrl = process.env.CANCEL_SUBSCRIPTION_QUEUE_URL!;
 
 const dbHost = process.env.DB_HOST!;
-const dbUser = process.env.DB_USER!;
-const dbName = process.env.DB_NAME!;
 const dbPort = process.env.DB_PORT!;
-const dbPassword = process.env.DB_PASSWORD!;
+const dbSecretArn = process.env.DB_SECRET_ARN!;
 
 const sqsQueue = new SQSClient({ apiVersion: "latest" });
+const secretClient = new SecretsManagerClient({ region });
 
 let pool: Pool | undefined;
 
@@ -32,7 +35,7 @@ let pool: Pool | undefined;
 //but the time the queue triggers the lambda we have a cursor, this is the last evaluated key from the previous batch
 //this is where our queries start from
 
-//i set a batch limit for fetching expired projects, howeve during the fetching process, i increased the limit by one to account for potential additional items.
+//i set a batch limit for fetching expired projects, howeve during the fetching process, i increased the limit by one to check if there a other batches
 //this allows us to check for more batches while excluding the extra item from the resubscription process.
 //if we do retrieve this extra item,it means that there are likely more batches to process, --- THEN WE KNOW WE HAVE A NEXT BATCH AND PASS THE LAST USERS INFO TO THE SQS
 
@@ -58,11 +61,20 @@ export const handler: Handler = async (event) => {
   console.log("STARTING CURSOR", cursor);
 
   if (!pool) {
+    //fetch the database credentials from the secret manager
+    const secret = await secretClient.send(
+      new GetSecretValueCommand({
+        SecretId: dbSecretArn,
+      })
+    );
+
+    const { username, password, dbname } = JSON.parse(secret.SecretString!);
+
     pool = new Pool({
       host: dbHost,
-      user: dbUser,
-      database: dbName,
-      password: dbPassword,
+      user: username,
+      database: dbname,
+      password,
       port: Number(dbPort),
       ssl: { rejectUnauthorized: false },
     });
@@ -74,24 +86,21 @@ export const handler: Handler = async (event) => {
     //fetch 1 more than the batchLimit, to check if there is a next batch
     const projects = await pool.query(
       `SELECT 
-      p.id, 
-      p."projectName", 
-      p."nextPaymentDate", 
-      p."currentPlan", 
-      p."cardInfo", 
-      p."apiKeyInfo", 
-      p."createdAt", 
-      u.id AS "userId",
-      u.email AS "userEmail"
-   FROM "Projects" p
-   JOIN "Users" u ON p."userId" = u."id"
-   WHERE p."status" = $1 
-   AND p."nextPaymentDate" <= $2 
-   AND p."currentPlan" <> $3
-   AND ($4::timestamp IS NULL OR (p."createdAt", p.id) > ($4, $5))  -- Cursor condition
-   ORDER BY p."createdAt" ASC, p.id ASC  -- Order by time, tie-break with UUID
+      id, 
+      "projectName", 
+      "nextPaymentDate", 
+      "currentPlan", 
+      "cardInfo", 
+      "apiKeyInfo", 
+      "createdAt", 
+      "userId"
+   FROM "Projects" 
+   WHERE "status" = $1 
+   AND "nextPaymentDate" <= $2 
+   AND "currentPlan" <> $3
+   AND ($4::timestamp IS NULL OR ("createdAt", id) > ($4, $5))  -- Cursor condition
+   ORDER BY "createdAt" ASC, id ASC  -- Order by time, tie-break with UUID
    LIMIT $6`,
-
       [
         Status.Active,
         new Date(),
@@ -140,11 +149,11 @@ export const handler: Handler = async (event) => {
             {
               method: "POST",
               body: JSON.stringify({
-                token: cardInfo.token,
-                email: project.userEmail,
-                currency: planDetails.currency,
                 countryCode: "NG",
+                token: cardInfo.token,
+                email: cardInfo.email,
                 amount: planDetails.amount,
+                currency: planDetails.currency,
                 tx_ref: `${project.id}-${project.nextPaymentDate.getTime()}`,
                 narration: `Renewal Charge for project: ${project.projectName}`,
                 meta: {
@@ -169,6 +178,11 @@ export const handler: Handler = async (event) => {
             if (chargeReq.status >= 500) {
               throw new Error(errorMessage.message);
             }
+
+            console.error(
+              `failed to charge user ${project.userId} for project: ${project.projectName} with projectId: ${project.id}, sending to queue`,
+              errorMessage
+            );
 
             await sqsQueue
               .send(
@@ -195,7 +209,10 @@ export const handler: Handler = async (event) => {
           //user was successfully charged
           break;
         } catch (error: unknown) {
-          console.error(`Error charging user: ${project.userEmail}`, error);
+          console.error(
+            `Error charging user: ${project.userId} for project ${project.projectName}, projectId: ${project.id}`,
+            error
+          );
 
           attempts++;
 

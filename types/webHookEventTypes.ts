@@ -5,7 +5,7 @@ export const webHookEventValidator = z.object({
   event: z.enum(["charge.completed"]),
   data: z.object({}).passthrough(),
   meta_data: z.object({
-    projectId: z.string(),
+    projectId: z.string().optional(),
     userId: z.string(),
     usagePlanId: z.string(),
     projectName: z.string(),

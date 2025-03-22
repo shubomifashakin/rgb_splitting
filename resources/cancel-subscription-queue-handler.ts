@@ -15,15 +15,15 @@ import { Pool } from "pg";
 
 import { ExpiredProject } from "../types/expiredSubscriptionProjectInfo";
 
-import { usagePlanValidator } from "../helpers/schemaValidator/validators";
 import { PlanType } from "../helpers/constants";
+import { usagePlanValidator } from "../helpers/schemaValidator/validators";
 
 const region = process.env.REGION!;
+
 const dbHost = process.env.DB_HOST!;
-const dbUser = process.env.DB_USER!;
-const dbName = process.env.DB_NAME!;
 const dbPort = process.env.DB_PORT!;
-const dbPassword = process.env.DB_PASSWORD!;
+const dbSecretArn = process.env.DB_SECRET_ARN!;
+
 const usagePlanSecretName = process.env.AVAILABLE_PLANS_SECRET_NAME!;
 
 const apiGatewayClient = new APIGatewayClient({
@@ -45,11 +45,19 @@ export const handler = async (event: SQSEvent): Promise<SQSBatchResponse> => {
   console.log("started", cancelledProjects);
 
   if (!pool) {
+    const secret = await secretClient.send(
+      new GetSecretValueCommand({
+        SecretId: dbSecretArn,
+      })
+    );
+
+    const { username, password, dbname } = JSON.parse(secret.SecretString!);
+
     pool = new Pool({
       host: dbHost,
-      user: dbUser,
-      password: dbPassword,
-      database: dbName,
+      user: username,
+      password,
+      database: dbname,
       port: Number(dbPort),
       ssl: { rejectUnauthorized: false },
     });
@@ -63,7 +71,7 @@ export const handler = async (event: SQSEvent): Promise<SQSBatchResponse> => {
         console.log("Processing project", {
           projectId: projectInfo.id,
           userId: projectInfo.userId,
-          userEmail: projectInfo.userEmail,
+          projectName: projectInfo.projectName,
         });
 
         if (!pool) {

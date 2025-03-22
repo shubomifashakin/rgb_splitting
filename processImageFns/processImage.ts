@@ -6,13 +6,13 @@ import { getGreenChannel } from "./channelFns/getGreenChannel";
 import { getRedAndBlueChannels } from "./channelFns/getRedAndBlueChannels";
 import { getRedAndGreenChannels } from "./channelFns/getRedAndGreenChannels";
 import { getGreenAndBlueChannels } from "./channelFns/getGreenAndBlueChannels";
+import { getRedGreenAndBlueChannels } from "./channelFns/getRedGreenAndBlueChannels";
 
 import { NormalizedChannels } from "../types/channels";
 import {
   grainType,
   ChannelType,
 } from "../helpers/schemaValidator/processValidator";
-import { getRedGreenAndBlueChannels } from "./channelFns/getRedGreenAndBlueChannels";
 
 const channelFns: Record<
   NormalizedChannels,
@@ -28,24 +28,24 @@ const channelFns: Record<
 };
 
 export async function processImage({
-  imageData,
-  channels,
   grains,
-  keyPrefix,
+  channels,
+  imageData,
   bucketName,
+  originalImageKey,
 }: {
+  grains: grainType;
+  bucketName: string;
   imageData: ImageData;
   channels: ChannelType;
-  grains: grainType;
-  keyPrefix: string;
-  bucketName: string;
+  originalImageKey: string;
 }) {
   let processedImages: ImageData[] = [];
   let processedInfo: {
-    channel: NormalizedChannels;
-    grain: number;
     key: string;
     url: string;
+    grain: number;
+    channel: NormalizedChannels;
   }[] = [];
 
   //if the channels and grains specified are qual, then process each channel with the corresponding grain at that index
@@ -53,24 +53,29 @@ export async function processImage({
     processedImages = await Promise.all(
       channels
         .map((channel, index) => {
+          const grain = grains[index];
           //remove any process that result in the same image uploaded
-          if (
-            channel === NormalizedChannels.REDGREENBLUE &&
-            grains[index] === 0
-          ) {
+          if (channel === NormalizedChannels.REDGREENBLUE && grain === 0) {
             return;
           }
 
-          processedInfo.push({
+          const { url, key } = formImageKeyAndUrl({
+            grain,
             channel,
-            grain: grains[index],
-            key: `${keyPrefix}-${channel}-${grains[index]}`,
-            url: `https://${bucketName}.s3.us-east-1.amazonaws.com/${keyPrefix}-${channel}-${grains[index]}`,
+            bucketName,
+            originalImageKey,
+          });
+
+          processedInfo.push({
+            url,
+            key,
+            grain,
+            channel,
           });
 
           return channelFns[channel]({
+            grain,
             imageData,
-            grain: grains[index],
           });
         })
         .filter((image) => image !== undefined)
@@ -90,16 +95,23 @@ export async function processImage({
             return;
           }
 
-          processedInfo.push({
-            channel,
+          const { url, key } = formImageKeyAndUrl({
             grain,
-            key: `${keyPrefix}-${channel}-${grain}`,
-            url: `https://${bucketName}.s3.us-east-1.amazonaws.com/${keyPrefix}-${channel}-${grain}`,
+            channel,
+            bucketName,
+            originalImageKey,
+          });
+
+          processedInfo.push({
+            key,
+            url,
+            grain,
+            channel,
           });
 
           return channelFns[channel]({
-            imageData,
             grain,
+            imageData,
           });
         })
         .filter((image) => image !== undefined)
@@ -112,31 +124,35 @@ export async function processImage({
     processedImages = await Promise.all(
       grains
         .map((grain, index) => {
-          const channelExistsAtIndex = channels[index];
+          const channel = channels[index];
 
           //if a channel does not exist at the current index, skip
-          if (!channelExistsAtIndex) {
+          if (!channel) {
             return;
           }
 
           //remove any process that result in the same image uploaded
-          if (
-            channelExistsAtIndex === NormalizedChannels.REDGREENBLUE &&
-            grain === 0
-          ) {
+          if (channel === NormalizedChannels.REDGREENBLUE && grain === 0) {
             return;
           }
 
-          processedInfo.push({
-            channel: channelExistsAtIndex,
+          const { url, key } = formImageKeyAndUrl({
             grain,
-            key: `${keyPrefix}-${channelExistsAtIndex}-${grain}`,
-            url: `https://${bucketName}.s3.us-east-1.amazonaws.com/${keyPrefix}-${channelExistsAtIndex}-${grain}`,
+            channel,
+            bucketName,
+            originalImageKey,
           });
 
-          return channelFns[channelExistsAtIndex]({
-            imageData,
+          processedInfo.push({
+            url,
+            key,
             grain,
+            channel,
+          });
+
+          return channelFns[channel]({
+            grain,
+            imageData,
           });
         })
         .filter((image) => image !== undefined)
@@ -155,16 +171,23 @@ export async function processImage({
             return;
           }
 
-          processedInfo.push({
-            channel,
+          const { url, key } = formImageKeyAndUrl({
             grain,
-            key: `${keyPrefix}-${channel}-${grain}`,
-            url: `https://${bucketName}.s3.us-east-1.amazonaws.com/${keyPrefix}-${channel}-${grain}`,
+            channel,
+            bucketName,
+            originalImageKey,
+          });
+
+          processedInfo.push({
+            url,
+            key,
+            grain,
+            channel,
           });
 
           return channelFns[channel]({
-            imageData,
             grain,
+            imageData,
           });
         })
         .filter((image) => image !== undefined)
@@ -176,21 +199,30 @@ export async function processImage({
     processedImages = await Promise.all(
       channels
         .map((channel) => {
+          const grain = grains[0];
+
           //remove any process that results in the same image uploaded
-          if (channel === NormalizedChannels.REDGREENBLUE && grains[0] === 0) {
+          if (channel === NormalizedChannels.REDGREENBLUE && grain === 0) {
             return;
           }
 
-          processedInfo.push({
+          const { url, key } = formImageKeyAndUrl({
+            grain,
             channel,
-            grain: grains[0],
-            key: `${keyPrefix}-${channel}-${grains[0]}`,
-            url: `https://${bucketName}.s3.us-east-1.amazonaws.com/${keyPrefix}-${channel}-${grains[0]}`,
+            bucketName,
+            originalImageKey,
+          });
+
+          processedInfo.push({
+            url,
+            key,
+            grain,
+            channel,
           });
 
           return channelFns[channel]({
             imageData,
-            grain: grains[0],
+            grain,
           });
         })
         .filter((image) => image !== undefined)
@@ -198,4 +230,21 @@ export async function processImage({
   }
 
   return { images: processedImages, processedInfo };
+}
+
+function formImageKeyAndUrl({
+  grain,
+  channel,
+  bucketName,
+  originalImageKey,
+}: {
+  grain: number;
+  bucketName: string;
+  originalImageKey: string;
+  channel: NormalizedChannels;
+}) {
+  const key = `${originalImageKey}/${channel}-${grain}`;
+  const url = `https://${bucketName}.s3.us-east-1.amazonaws.com/${key}`;
+
+  return { key, url };
 }

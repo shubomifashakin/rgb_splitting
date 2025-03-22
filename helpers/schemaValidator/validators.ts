@@ -4,6 +4,8 @@ import { planNameValidator } from "./planNameValidator";
 
 import { PlanType } from "../constants";
 
+export const projectIdValidator = z.string().uuid();
+
 export const newPaymentRequestBodyValidator = z.object({
   planName: planNameValidator,
 
@@ -21,7 +23,7 @@ export const newPaymentRequestBodyValidator = z.object({
     .optional()
     .transform((value) => value?.trim()),
 
-  projectId: z.string().uuid().optional(),
+  projectId: projectIdValidator.optional(),
 });
 
 export const usagePlanValidator = z.object({

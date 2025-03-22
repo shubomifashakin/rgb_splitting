@@ -18,6 +18,7 @@ import {
   webHookEventValidator,
   ChargeCompletedData,
 } from "../types/webHookEventTypes";
+import { CardInfo } from "../types/cardInfo";
 import { ApiKeyInfo } from "../types/apiKeyInfo";
 import { ChargeVerificationStatus } from "../types/chargeVerificationStatus";
 
@@ -30,10 +31,8 @@ const paymentGatewaySecretName = process.env.PAYMENT_SECRET_NAME!;
 const webhookEventVerifierSecretName = process.env.WEBHOOK_SECRET_NAME!;
 
 const dbHost = process.env.DB_HOST!;
-const dbUser = process.env.DB_USER!;
-const dbName = process.env.DB_NAME!;
 const dbPort = process.env.DB_PORT!;
-const dbPassword = process.env.DB_PASSWORD!;
+const dbSecretArn = process.env.DB_SECRET_ARN!;
 
 const apiGatewayClient = new APIGatewayClient({
   region,
@@ -56,11 +55,20 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
   }
 
   if (!pool) {
+    //fetch the database credentials from the secret manager
+    const secret = await secretClient.send(
+      new GetSecretValueCommand({
+        SecretId: dbSecretArn,
+      })
+    );
+
+    const { username, password, dbname } = JSON.parse(secret.SecretString!);
+
     pool = new Pool({
       host: dbHost,
-      user: dbUser,
-      password: dbPassword,
-      database: dbName,
+      user: username,
+      password: password,
+      database: dbname,
       port: Number(dbPort),
       ssl: { rejectUnauthorized: false },
     });
@@ -171,6 +179,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
               webHookEvent.meta_data.userId
             }`,
             enabled: true,
+            description: `This api key belongs to project: ${webHookEvent.meta_data.projectName} by user: ${webHookEvent.meta_data.userId} for RGBreak.`,
           })
         );
 
@@ -194,30 +203,17 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
         const apiKeyInfo = {
           apiKeyId: apiKey.id,
           usagePlanId: webHookEvent.meta_data.usagePlanId,
-        };
+        } as ApiKeyInfo;
 
         const cardInfo = {
+          email: eventData.customer.email,
           token: chargeVerificationRes.data.card.token,
           expiry: chargeVerificationRes.data.card.expiry,
-        };
-
-        //check if the user exists
-        const userExists = await pool.query(
-          `SELECT id FROM "Users" WHERE id = $1`,
-          [webHookEvent.meta_data.userId]
-        );
-
-        if (!userExists.rowCount) {
-          const createUserQuery = `INSERT INTO "Users"(id, email) VALUES($1, $2) RETURNING id`;
-          await pool.query(createUserQuery, [
-            webHookEvent.meta_data.userId,
-            eventData.customer.email,
-          ]);
-        }
+        } as CardInfo;
 
         const createProjectQueryText = `INSERT INTO "Projects"(id, "userId", "projectName", "currentPlan", "apiKey", "apiKeyInfo", "cardInfo", "status", "currentBillingDate", "nextPaymentDate", "createdAt") VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`;
         await pool.query(createProjectQueryText, [
-          webHookEvent.meta_data.projectId,
+          uuid(),
           webHookEvent.meta_data.userId,
           webHookEvent.meta_data.projectName,
           webHookEvent.meta_data.planName,

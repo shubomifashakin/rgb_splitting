@@ -8,8 +8,10 @@ export enum PlanType {
 
 export enum Status {
   Active = "active",
-  Inactive = "inactive",
+  Inactive = "cancelled",
 }
+
+export const imageRouteVar = "image";
 
 export const maxInArray = 3;
 export const default_grain = 0;

@@ -1,8 +1,6 @@
 import { S3Client } from "@aws-sdk/client-s3";
-import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { APIGatewayProxyEventV2, Handler } from "aws-lambda";
 import { createPresignedPost } from "@aws-sdk/s3-presigned-post";
-import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import {
   GetSecretValueCommand,
   SecretsManagerClient,
@@ -15,28 +13,24 @@ import {
   PlanType,
   defaultGrain,
   defaultNormalizedChannel,
+  imageRouteVar,
 } from "../helpers/constants";
 import { processValidator } from "../helpers/schemaValidator/processValidator";
 import { planSizesValidator } from "../helpers/schemaValidator/planSizesValidator";
 
 const region = process.env.REGION!;
 const s3Bucket = process.env.BUCKET_NAME!;
-const tableName = process.env.TABLE_NAME!;
 
-const dbPort = process.env.DB_PORT!;
 const dbHost = process.env.DB_HOST!;
-const dbUser = process.env.DB_USER!;
-const dbName = process.env.DB_NAME!;
-const dbPassword = process.env.DB_PASSWORD!;
+const dbPort = process.env.DB_PORT!;
+const dbSecretArn = process.env.DB_SECRET_ARN!;
 
 const maxPlanSizesSecretName = process.env.MAX_PLAN_SIZES_SECRET_NAME!;
 
 const s3 = new S3Client({
   region,
 });
-const ddbClient = new DynamoDBClient({ region });
 const secretClient = new SecretsManagerClient({ region });
-const dynamoClient = DynamoDBDocumentClient.from(ddbClient);
 
 let pool: Pool | undefined;
 
@@ -58,11 +52,20 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
   }
 
   if (!pool) {
+    //fetch the database credentials from the secret manager
+    const secret = await secretClient.send(
+      new GetSecretValueCommand({
+        SecretId: dbSecretArn,
+      })
+    );
+
+    const { username, password, dbname } = JSON.parse(secret.SecretString!);
+
     pool = new Pool({
       host: dbHost,
-      user: dbUser,
-      password: dbPassword,
-      database: dbName,
+      user: username,
+      password: password,
+      database: dbname,
       port: Number(dbPort),
       ssl: { rejectUnauthorized: false },
     });
@@ -86,6 +89,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
   const { channels, grain } = data;
 
   //this process would not generate a new image, so do not respond
+  //essentially if everything is a default, do not generate a new image, reject the request
   if (
     channels.length === defaultNormalizedChannel.length &&
     channels.every((channel) => defaultNormalizedChannel.includes(channel)) &&
@@ -171,7 +175,8 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     );
   }
 
-  const imageKey = uuid();
+  const imageId = uuid();
+  const imageKey = `${projectInfo.id}/${imageRouteVar}/${imageId}`;
 
   try {
     //this was not good enough for my use case, it wasnt alowing me limit the file size & content type

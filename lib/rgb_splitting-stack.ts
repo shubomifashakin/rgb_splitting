@@ -30,12 +30,21 @@ import { Queue } from "aws-cdk-lib/aws-sqs";
 import { Secret } from "aws-cdk-lib/aws-secretsmanager";
 import { SqsEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
 
-import { PlanType } from "../helpers/constants";
-import { Port, SecurityGroup, SubnetType, Vpc } from "aws-cdk-lib/aws-ec2";
+import { imageRouteVar, PlanType } from "../helpers/constants";
+import {
+  InstanceClass,
+  InstanceSize,
+  InstanceType,
+  Port,
+  SecurityGroup,
+  SubnetType,
+  Vpc,
+} from "aws-cdk-lib/aws-ec2";
 import {
   BuildSpec,
   ComputeType,
   FilterGroup,
+  LinuxLambdaBuildImage,
   Project,
   Source,
 } from "aws-cdk-lib/aws-codebuild";
@@ -106,7 +115,6 @@ export class RgbSplittingStack extends cdk.Stack {
         {
           cidrMask: 24,
           name: "database-subnet",
-          //isolated subnets are not accessible from the internet
           subnetType: SubnetType.PRIVATE_ISOLATED,
         },
         {
@@ -116,6 +124,7 @@ export class RgbSplittingStack extends cdk.Stack {
           subnetType: SubnetType.PRIVATE_WITH_EGRESS,
         },
       ],
+      vpcName: `${projectPrefix}-rds-vpc`,
     });
 
     //define the firewall of the db
@@ -141,7 +150,7 @@ export class RgbSplittingStack extends cdk.Stack {
       }
     );
 
-    //allow only lambda to access rds
+    //allow lambda to access rds
     dbSecurityGroup.addIngressRule(
       lambdaSecurityGroup,
       Port.tcp(5432),
@@ -161,7 +170,7 @@ export class RgbSplittingStack extends cdk.Stack {
       {
         allocatedStorage: 20,
         maxAllocatedStorage: 25,
-        enablePerformanceInsights: true,
+        enablePerformanceInsights: false,
         storageType: rds.StorageType.GP2,
         databaseName: dbName,
         vpc: rdsVpc,
@@ -172,7 +181,11 @@ export class RgbSplittingStack extends cdk.Stack {
         removalPolicy: cdk.RemovalPolicy.SNAPSHOT,
         engine: rds.DatabaseInstanceEngine.POSTGRES,
         credentials: rds.Credentials.fromSecret(newRdsDbSecret),
-        performanceInsightRetention: rds.PerformanceInsightRetention.DEFAULT,
+        // performanceInsightRetention: rds.PerformanceInsightRetention.DEFAULT,
+        instanceType: InstanceType.of(
+          InstanceClass.T4G, //was using production instance b4, changed to free tier cus i got billed😭
+          InstanceSize.MICRO
+        ),
       }
     );
 
@@ -204,8 +217,8 @@ export class RgbSplittingStack extends cdk.Stack {
         projectName: `${projectPrefix}-rds-code-build`,
         description:
           "The essence of this code build is just to run our prisma migrations",
-        timeout: cdk.Duration.minutes(10),
-        queuedTimeout: cdk.Duration.minutes(10),
+        timeout: cdk.Duration.minutes(6),
+        queuedTimeout: cdk.Duration.minutes(6),
       }
     );
 
@@ -327,13 +340,6 @@ export class RgbSplittingStack extends cdk.Stack {
           DB_SECRET_ARN: newRdsDbSecret.secretArn,
           DB_PORT: dbInstance.dbInstanceEndpointPort,
           DB_HOST: dbInstance.dbInstanceEndpointAddress,
-          DB_USER: newRdsDbSecret
-            .secretValueFromJson("username")
-            .unsafeUnwrap(),
-          DB_PASSWORD: newRdsDbSecret
-            .secretValueFromJson("password")
-            .unsafeUnwrap(),
-          DB_NAME: newRdsDbSecret.secretValueFromJson("dbname").unsafeUnwrap(),
         },
         entry: "./resources/splitting-handler.ts",
         handler: "handler",
@@ -372,13 +378,6 @@ export class RgbSplittingStack extends cdk.Stack {
           DB_SECRET_ARN: newRdsDbSecret.secretArn,
           DB_PORT: dbInstance.dbInstanceEndpointPort,
           DB_HOST: dbInstance.dbInstanceEndpointAddress,
-          DB_USER: newRdsDbSecret
-            .secretValueFromJson("username")
-            .unsafeUnwrap(),
-          DB_PASSWORD: newRdsDbSecret
-            .secretValueFromJson("password")
-            .unsafeUnwrap(),
-          DB_NAME: newRdsDbSecret.secretValueFromJson("dbname").unsafeUnwrap(),
         },
         entry: "./resources/generate-presigned-url.ts",
         handler: "handler",
@@ -409,13 +408,6 @@ export class RgbSplittingStack extends cdk.Stack {
           DB_SECRET_ARN: newRdsDbSecret.secretArn,
           DB_PORT: dbInstance.dbInstanceEndpointPort,
           DB_HOST: dbInstance.dbInstanceEndpointAddress,
-          DB_USER: newRdsDbSecret
-            .secretValueFromJson("username")
-            .unsafeUnwrap(),
-          DB_PASSWORD: newRdsDbSecret
-            .secretValueFromJson("password")
-            .unsafeUnwrap(),
-          DB_NAME: newRdsDbSecret.secretValueFromJson("dbname").unsafeUnwrap(),
         },
         timeout: cdk.Duration.seconds(20),
         vpc: rdsVpc,
@@ -442,13 +434,6 @@ export class RgbSplittingStack extends cdk.Stack {
           DB_SECRET_ARN: newRdsDbSecret.secretArn,
           DB_PORT: dbInstance.dbInstanceEndpointPort,
           DB_HOST: dbInstance.dbInstanceEndpointAddress,
-          DB_USER: newRdsDbSecret
-            .secretValueFromJson("username")
-            .unsafeUnwrap(),
-          DB_PASSWORD: newRdsDbSecret
-            .secretValueFromJson("password")
-            .unsafeUnwrap(),
-          DB_NAME: newRdsDbSecret.secretValueFromJson("dbname").unsafeUnwrap(),
         },
         timeout: cdk.Duration.seconds(10),
         vpc: rdsVpc,
@@ -514,13 +499,6 @@ export class RgbSplittingStack extends cdk.Stack {
           DB_SECRET_ARN: newRdsDbSecret.secretArn,
           DB_PORT: dbInstance.dbInstanceEndpointPort,
           DB_HOST: dbInstance.dbInstanceEndpointAddress,
-          DB_USER: newRdsDbSecret
-            .secretValueFromJson("username")
-            .unsafeUnwrap(),
-          DB_PASSWORD: newRdsDbSecret
-            .secretValueFromJson("password")
-            .unsafeUnwrap(),
-          DB_NAME: newRdsDbSecret.secretValueFromJson("dbname").unsafeUnwrap(),
         },
         timeout: cdk.Duration.minutes(2),
         recursiveLoop: RecursiveLoop.ALLOW, // got an email from aws thar my function was terminated, so i added this, the resubscribe lambda uses a recursive design
@@ -545,15 +523,9 @@ export class RgbSplittingStack extends cdk.Stack {
         environment: {
           REGION: this.region,
           AVAILABLE_PLANS_SECRET_NAME: availablePlansSecretName,
-          DB_USER: newRdsDbSecret
-            .secretValueFromJson("username")
-            .unsafeUnwrap(),
-          DB_PASSWORD: newRdsDbSecret
-            .secretValueFromJson("password")
-            .unsafeUnwrap(),
-          DB_NAME: newRdsDbSecret.secretValueFromJson("dbname").unsafeUnwrap(),
           DB_PORT: dbInstance.dbInstanceEndpointPort,
           DB_HOST: dbInstance.dbInstanceEndpointAddress,
+          DB_SECRET_ARN: newRdsDbSecret.secretArn,
         },
         timeout: cdk.Duration.seconds(45),
         vpc: rdsVpc,
@@ -576,13 +548,7 @@ export class RgbSplittingStack extends cdk.Stack {
         handler: "handler",
         environment: {
           REGION: this.region,
-          DB_USER: newRdsDbSecret
-            .secretValueFromJson("username")
-            .unsafeUnwrap(),
-          DB_PASSWORD: newRdsDbSecret
-            .secretValueFromJson("password")
-            .unsafeUnwrap(),
-          DB_NAME: newRdsDbSecret.secretValueFromJson("dbname").unsafeUnwrap(),
+          DB_SECRET_ARN: newRdsDbSecret.secretArn,
           DB_PORT: dbInstance.dbInstanceEndpointPort,
           DB_HOST: dbInstance.dbInstanceEndpointAddress,
         },
@@ -776,14 +742,14 @@ export class RgbSplittingStack extends cdk.Stack {
       },
     });
 
-    const prodStage = new Stage(this, `${projectPrefix}-prod-stage`, {
-      stageName: "prod",
-      deployment: new Deployment(this, `${projectPrefix}-api-prod-deployment`, {
-        api: rgbRestApi,
-        description: "The prod api stage deployment for the rgb splitting",
-      }),
-      description: "The prod api stage for the rgb splitting",
-    });
+    // const prodStage = new Stage(this, `${projectPrefix}-prod-stage`, {
+    //   stageName: "prod",
+    //   deployment: new Deployment(this, `${projectPrefix}-api-prod-deployment`, {
+    //     api: rgbRestApi,
+    //     description: "The prod api stage deployment for the rgb splitting",
+    //   }),
+    //   description: "The prod api stage for the rgb splitting",
+    // });
 
     //create the usage plans
     const freeTierUsagePlan = new UsagePlan(
@@ -792,12 +758,9 @@ export class RgbSplittingStack extends cdk.Stack {
       {
         name: `${projectPrefix}-free-plan`,
         description: "Free tier usage plan, 200 Requests per month",
-        apiStages: [
-          { stage: rgbRestApi.deploymentStage },
-          { stage: prodStage },
-        ],
+        apiStages: [{ stage: rgbRestApi.deploymentStage }],
         quota: {
-          limit: 200,
+          limit: 70,
           period: Period.MONTH,
         },
         throttle: {
@@ -810,7 +773,7 @@ export class RgbSplittingStack extends cdk.Stack {
     const proTierUsagePlan = new UsagePlan(this, `${projectPrefix}-pro-plan`, {
       name: `${projectPrefix}-pro-plan`,
       description: "Pro tier usage plan, 1000 Requests per month",
-      apiStages: [{ stage: rgbRestApi.deploymentStage }, { stage: prodStage }],
+      apiStages: [{ stage: rgbRestApi.deploymentStage }],
       quota: {
         limit: 1000,
         period: Period.MONTH,
@@ -827,10 +790,7 @@ export class RgbSplittingStack extends cdk.Stack {
       {
         name: `${projectPrefix}-executive-plan`,
         description: "Executive tier usage plan, 2500 Requests per month",
-        apiStages: [
-          { stage: rgbRestApi.deploymentStage },
-          { stage: prodStage },
-        ],
+        apiStages: [{ stage: rgbRestApi.deploymentStage }],
         quota: {
           limit: 2500,
           period: Period.MONTH,
@@ -891,9 +851,13 @@ export class RgbSplittingStack extends cdk.Stack {
     const triggerChargeRoute = v1Root.addResource("trigger-payment");
 
     //route to get processed images
-    const baseProcessedImagesRoute = v1Root.addResource("images");
-    const getProcessedImagesRoute =
-      baseProcessedImagesRoute.addResource("{imageId}");
+    const baseProcessedImagesRoute = v1Root.addResource("results");
+    const baseProcessedImagesProjectIdRouter =
+      baseProcessedImagesRoute.addResource("{projectId}");
+
+    const imageRoute =
+      baseProcessedImagesProjectIdRouter.addResource(imageRouteVar);
+    const getProcessedImagesRoute = imageRoute.addResource("{imageId}");
 
     generatePresignedUrlRoute.addMethod(
       HttpMethod.POST,
@@ -929,42 +893,42 @@ export class RgbSplittingStack extends cdk.Stack {
     );
 
     //construct the prod stage ARN
-    const prodStageArn = `arn:aws:execute-api:${cdk.Stack.of(this).region}:${
-      cdk.Stack.of(this).account
-    }:${rgbRestApi.restApiId}/prod`;
+    // const prodStageArn = `arn:aws:execute-api:${cdk.Stack.of(this).region}:${
+    //   cdk.Stack.of(this).account
+    // }:${rgbRestApi.restApiId}/prod`;
 
-    //alow the prod stage invoke our lambdas
-    generatePresignedUrlLambda.addPermission(
-      `${projectPrefix}-allow-prod-stage-permission`,
-      {
-        principal: new ServicePrincipal("apigateway.amazonaws.com"),
-        sourceArn: `${prodStageArn}/POST/v1/process`,
-      }
-    );
+    // //alow the prod stage invoke our lambdas
+    // generatePresignedUrlLambda.addPermission(
+    //   `${projectPrefix}-allow-prod-stage-permission`,
+    //   {
+    //     principal: new ServicePrincipal("apigateway.amazonaws.com"),
+    //     sourceArn: `${prodStageArn}/POST/v1/process`,
+    //   }
+    // );
 
-    webHookLambda.addPermission(
-      `${projectPrefix}-allow-prod-stage-permission`,
-      {
-        principal: new ServicePrincipal("apigateway.amazonaws.com"),
-        sourceArn: `${prodStageArn}/POST/v1/webhook`,
-      }
-    );
+    // webHookLambda.addPermission(
+    //   `${projectPrefix}-allow-prod-stage-permission`,
+    //   {
+    //     principal: new ServicePrincipal("apigateway.amazonaws.com"),
+    //     sourceArn: `${prodStageArn}/POST/v1/webhook`,
+    //   }
+    // );
 
-    getUsersApiKeysLambda.addPermission(
-      `${projectPrefix}-allow-prod-stage-permission`,
-      {
-        principal: new ServicePrincipal("apigateway.amazonaws.com"),
-        sourceArn: `${prodStageArn}/GET/v1/keys`,
-      }
-    );
+    // getUsersApiKeysLambda.addPermission(
+    //   `${projectPrefix}-allow-prod-stage-permission`,
+    //   {
+    //     principal: new ServicePrincipal("apigateway.amazonaws.com"),
+    //     sourceArn: `${prodStageArn}/GET/v1/keys`,
+    //   }
+    // );
 
-    triggerChargeLambda.addPermission(
-      `${projectPrefix}-allow-prod-stage-permission`,
-      {
-        principal: new ServicePrincipal("apigateway.amazonaws.com"),
-        sourceArn: `${prodStageArn}/POST/v1/trigger-payment`,
-      }
-    );
+    // triggerChargeLambda.addPermission(
+    //   `${projectPrefix}-allow-prod-stage-permission`,
+    //   {
+    //     principal: new ServicePrincipal("apigateway.amazonaws.com"),
+    //     sourceArn: `${prodStageArn}/POST/v1/trigger-payment`,
+    //   }
+    // );
 
     //grant the webhook Lambda permission to create new ApiKeys & fetch all our available keys
     //grant it permission to modify our usage plans
@@ -1094,11 +1058,11 @@ export class RgbSplittingStack extends cdk.Stack {
         Name: `${projectPrefix}-resubscribe-eventbridge-task`,
         Description:
           "This rule runs every week to resubscribe all users whose subscriptions have expired to their plan",
-        ScheduleExpression: "rate(7 days)",
+        ScheduleExpression: "rate(7 days)", //TODO: SHOULD BE 7 DAYS
         State: "ENABLED",
         FlexibleTimeWindow: {
           Mode: "FLEXIBLE",
-          MaximumWindowInMinutes: 7,
+          MaximumWindowInMinutes: 10,
         },
         Target: {
           Arn: resubscribeLambda.functionArn,
@@ -1152,6 +1116,15 @@ export class RgbSplittingStack extends cdk.Stack {
       EventType.OBJECT_CREATED_POST,
       new LambdaDestination(splittingLambda)
     );
+
+    //grant the lambdas permissions to read from the database secrets
+    newRdsDbSecret.grantRead(webHookLambda);
+    newRdsDbSecret.grantRead(splittingLambda);
+    newRdsDbSecret.grantRead(resubscribeLambda);
+    newRdsDbSecret.grantRead(getUsersApiKeysLambda);
+    newRdsDbSecret.grantRead(cancelSubscriptionLambda);
+    newRdsDbSecret.grantRead(getProcessedImagesLambda);
+    newRdsDbSecret.grantRead(generatePresignedUrlLambda);
 
     // projectsTable.grantReadWriteData(webHookLambda);
     // projectsTable.grantReadWriteData(resubscribeLambda);

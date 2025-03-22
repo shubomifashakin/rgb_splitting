@@ -12,16 +12,19 @@ import { createCanvas, loadImage } from "canvas";
 import { processImage } from "../processImageFns/processImage";
 
 import { s3ImageMetadataValidator } from "../helpers/schemaValidator/s3ImageMetadataValidator";
+import {
+  GetSecretValueCommand,
+  SecretsManagerClient,
+} from "@aws-sdk/client-secrets-manager";
 
 const region = process.env.REGION!;
 
 const dbHost = process.env.DB_HOST!;
-const dbUser = process.env.DB_USER!;
-const dbName = process.env.DB_NAME!;
 const dbPort = process.env.DB_PORT!;
-const dbPassword = process.env.DB_PASSWORD!;
+const dbSecretArn = process.env.DB_SECRET_ARN!;
 
 const s3client = new S3Client({ region });
+const secretClient = new SecretsManagerClient({ region });
 
 let pool: Pool | undefined;
 
@@ -34,11 +37,22 @@ export const handler: Handler = async (event: S3Event) => {
     }
 
     if (!pool) {
+      //fetch the database credentials from the secret manager
+      const secret = await secretClient.send(
+        new GetSecretValueCommand({
+          SecretId: dbSecretArn,
+        })
+      );
+
+      const { username, password, dbname } = JSON.parse(secret.SecretString!);
+
+      console.log(username, password);
+
       pool = new Pool({
         host: dbHost,
-        user: dbUser,
-        password: dbPassword,
-        database: dbName,
+        user: username,
+        password,
+        database: dbname,
         port: Number(dbPort),
         ssl: { rejectUnauthorized: false },
       });
@@ -98,7 +112,7 @@ export const handler: Handler = async (event: S3Event) => {
       imageData,
       channels,
       grains: grain,
-      keyPrefix: imageKey,
+      originalImageKey: imageKey,
       bucketName: imageBucket,
     });
 

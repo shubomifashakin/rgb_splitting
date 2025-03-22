@@ -1,15 +1,21 @@
 import {
+  GetSecretValueCommand,
+  SecretsManagerClient,
+} from "@aws-sdk/client-secrets-manager";
+import {
   APIGatewayEventRequestContextV2,
   APIGatewayProxyEventV2,
 } from "aws-lambda";
 
 import { Pool } from "pg";
 
+const region = process.env.REGION!;
+
 const dbHost = process.env.DB_HOST!;
-const dbUser = process.env.DB_USER!;
-const dbName = process.env.DB_NAME!;
 const dbPort = process.env.DB_PORT!;
-const dbPassword = process.env.DB_PASSWORD!;
+const dbSecretArn = process.env.DB_SECRET_ARN!;
+
+const secretClient = new SecretsManagerClient({ region });
 
 let pool: Pool | undefined;
 
@@ -31,11 +37,20 @@ export const handler = async (event: CustomAPIGatewayEventV2) => {
   const userId = event.requestContext.authorizer.principalId;
 
   if (!pool) {
+    //fetch the database credentials from the secret manager
+    const secret = await secretClient.send(
+      new GetSecretValueCommand({
+        SecretId: dbSecretArn,
+      })
+    );
+
+    const { username, password, dbname } = JSON.parse(secret.SecretString!);
+
     pool = new Pool({
       host: dbHost,
-      user: dbUser,
-      password: dbPassword,
-      database: dbName,
+      user: username,
+      password: password,
+      database: dbname,
       port: Number(dbPort),
       ssl: { rejectUnauthorized: false },
     });
@@ -43,10 +58,14 @@ export const handler = async (event: CustomAPIGatewayEventV2) => {
 
   //TODO: PAGINATE THIS, ONLY 10 AT ONCE
   try {
-    const keys = await pool.query(
-      `SELECT id, "apiKey", "createdAt" , "projectName", "currentPlan" FROM "Projects" WHERE "userId" = $1 ORDER BY "createdAt" DESC LIMIT 10`,
-      [userId]
-    );
+    const query = {
+      // give the query a unique name
+      name: "fetch-all-user-api-keys",
+      text: `SELECT id, "apiKey", "createdAt" , "projectName", "currentPlan" FROM "Projects" WHERE "userId" = $1 ORDER BY "createdAt" DESC LIMIT 10`,
+      values: [userId],
+    };
+
+    const keys = await pool.query(query);
 
     console.log("completed successfully");
 
