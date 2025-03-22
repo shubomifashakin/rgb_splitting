@@ -20,7 +20,7 @@ import {
 
 import { ExpiredProject } from "../types/expiredSubscriptionProjectInfo";
 
-import { usagePlanValidator } from "../helpers/schemaValidator/validators";
+import { usagePlanValidator } from "../helpers/schemaValidator/usagePlanValidator";
 import { PlanType } from "../helpers/constants";
 
 const region = process.env.REGION!;

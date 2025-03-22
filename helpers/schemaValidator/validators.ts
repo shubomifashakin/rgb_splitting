@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { planNameValidator } from "./planNameValidator";
 
-import { PlanType } from "../constants";
+export const projectIdValidator = z.string().uuid();
 
 export const newPaymentRequestBodyValidator = z.object({
   planName: planNameValidator,
@@ -12,7 +12,7 @@ export const newPaymentRequestBodyValidator = z.object({
     .min(4, { message: "Project name should be at least 4 characters" })
     .transform((value) => value.toLowerCase().trim()),
 
-  email: z.string({ message: "Invalid type of emailAddress" }).email(),
+  email: z.string({ message: "Invalid email" }).email(),
 
   userId: z.string(),
 
@@ -21,11 +21,5 @@ export const newPaymentRequestBodyValidator = z.object({
     .optional()
     .transform((value) => value?.trim()),
 
-  projectId: z.string().uuid().optional(),
-});
-
-export const usagePlanValidator = z.object({
-  [PlanType.Free]: z.string(),
-  [PlanType.Pro]: z.string(),
-  [PlanType.Executive]: z.string(),
+  projectId: projectIdValidator.optional(),
 });

@@ -5,6 +5,8 @@ import {
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
 
 import { createCanvas, loadImage } from "canvas";
 
@@ -12,7 +14,12 @@ import { processImage } from "../processImageFns/processImage";
 
 import { s3ImageMetadataValidator } from "../helpers/schemaValidator/s3ImageMetadataValidator";
 
-const s3client = new S3Client({ region: process.env.REGION! });
+const region = process.env.REGION!;
+const processedResultTable = process.env.RESULTS_TABLE_NAME!;
+
+const s3client = new S3Client({ region });
+const ddbClient = new DynamoDBClient({ region });
+const dynamoClient = DynamoDBDocumentClient.from(ddbClient);
 
 export const handler: Handler = async (event: S3Event) => {
   try {
@@ -25,11 +32,14 @@ export const handler: Handler = async (event: S3Event) => {
     const imageInfo = event.Records[0];
     console.log(imageInfo);
 
+    const originalImageKey = imageInfo.s3.object.key;
+    const bucketName = imageInfo.s3.bucket.name;
+
     //get the image from s3
     const s3Image = await s3client.send(
       new GetObjectCommand({
-        Bucket: imageInfo.s3.bucket.name,
-        Key: imageInfo.s3.object.key,
+        Bucket: bucketName,
+        Key: originalImageKey,
       })
     );
 
@@ -50,9 +60,9 @@ export const handler: Handler = async (event: S3Event) => {
       throw new Error(`Invalid image metadata ${error.message}`);
     }
 
-    const { channels, grain } = data;
+    const { channels, grains } = data;
 
-    console.log(channels, grain);
+    console.log(channels, grains);
 
     const transformedImage = await s3Image.Body.transformToByteArray();
     const bufferArray = Buffer.from(transformedImage);
@@ -67,7 +77,13 @@ export const handler: Handler = async (event: S3Event) => {
 
     const imageData = canvasCtx.getImageData(0, 0, image.width, image.height);
 
-    const { images, keys } = await processImage(imageData, channels, grain);
+    const { images, processedInfo } = await processImage({
+      grains,
+      channels,
+      imageData,
+      bucketName,
+      originalImageKey,
+    });
 
     for (let i = 0; i < images.length; i++) {
       const processedImage = images[i];
@@ -80,24 +96,42 @@ export const handler: Handler = async (event: S3Event) => {
       await s3client.send(
         new PutObjectCommand({
           Body: buffer,
-          ContentType: "image/png",
+          ContentType: "image/jpeg",
           Bucket: imageInfo.s3.bucket.name,
-          Key: `${imageInfo.s3.object.key}-${keys[i]}`,
+          Key: processedInfo[i].key,
         })
       );
     }
 
-    //store the red green & blue images in the users in dynamo db for that particular api key that was used, and also include the date
     console.log(images);
+
+    const processedImages = processedInfo.map((processedImage) => {
+      return {
+        url: processedImage.url,
+        grain: processedImage.grain,
+        channels: processedImage.channel,
+      };
+    });
+
+    //store the results in the results table
+    await dynamoClient.send(
+      new PutCommand({
+        TableName: processedResultTable,
+        Item: {
+          results: processedImages,
+          imageId: originalImageKey,
+          projectId: data.project_id,
+          originalImageUrl: `https://${bucketName}.s3.${region}.amazonaws.com/${originalImageKey}`,
+          createdAt: Date.now(),
+        },
+      })
+    );
+
+    console.log("completed successfully");
 
     return;
   } catch (error: unknown) {
-    if (error instanceof Error) {
-      return {
-        statusCode: 400,
-        body: JSON.stringify({ message: error.message, status: "fail" }),
-      };
-    }
+    console.log(error);
 
     //so it can be caught by alarm
     throw error;

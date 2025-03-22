@@ -22,13 +22,12 @@ const dynamo = DynamoDBDocumentClient.from(client);
 
 const sqsQueue = new SQSClient({ apiVersion: "latest" });
 
-//so this function works like this, every 7 days it is invoked by an event bridge rule,this is what starts the resubscription process for expired projects
-//once that first invocation is complete, if there are still more expired projects that werent fetched (denoted by the presence of last evaluated key), it will send them to the queue
-//the queue will trigger the lambda again, and the process will repeat
-//but the time the queue triggers the lambda we have a cursor, this is the last evaluated key from the previous batch
-//this is where our queries start from
+//this works like this, it is initially triggered by an eventbridge schedule every 7 days
+//on first invocation, it has no cursor, so we fetch from the beginning
+//after initial fetch, if there is a last evaluated batch, then it means there are still more items in the table that satisfy our condition
+//if there is a last evaluated key, we send it to the queue and the process will continue
 
-//this is a recursive design, the process would repeat until there are no more projects to process
+//this is a recursive process, because the queue continues to trigger the lambda until there are no batches left
 export const handler: Handler = async (event: SQSEvent | null) => {
   console.log("event", event);
 
@@ -41,7 +40,7 @@ export const handler: Handler = async (event: SQSEvent | null) => {
 
   console.log("STARTING CURSOR", cursor);
 
-  const batchLimit = 5000;
+  const batchLimit = 5000; //TODO: CHANGE TO 5000
 
   try {
     //get all the projects with pro or exec subscriptions that are active & the nextPaymentDate is less than  or equal to the current date
@@ -58,7 +57,7 @@ export const handler: Handler = async (event: SQSEvent | null) => {
         },
         FilterExpression: "currentPlan <> :excludedPlan",
         ProjectionExpression:
-          "id, email, userId, projectName, nextPaymentDate, currentPlan, apiKeyInfo, cardTokenInfo",
+          "id, email, userId, projectName, nextPaymentDate, currentPlan, cardTokenInfo",
         Limit: batchLimit,
         ExclusiveStartKey: cursor,
       })
@@ -149,6 +148,7 @@ export const handler: Handler = async (event: SQSEvent | null) => {
             }
 
             //user was successfully charged
+            console.log("charged user  successfully");
             break;
           } catch (error: unknown) {
             console.error(`Error charging user: ${project.email}`, error);
@@ -179,15 +179,6 @@ export const handler: Handler = async (event: SQSEvent | null) => {
     console.log("NEXT CURSOR", projectsReq.LastEvaluatedKey);
 
     //if there are more projects to process, send them to the queue -- THIS IS TRUE IF THERE IS A LAST EVALUATEDKEY RETURNED
-
-    //*** EXPLANATORY NOTE */
-    //if the lambda fails at this point, when the last batch has been processed but we have a next batch
-    //it would try again, but this time we would actually process the new batch, since the previous batch has been taken care of by the webhook
-    //they would actually be excluded from the query because they no longer satisfy the expired condition, acutally giving us the next batch of users to process on retry.
-    //this way, no 2 users get processed twice. plus the payments are idempotent so we actually wouldnt double charge them
-
-    //if it keeps failing at this point, at some point during the retries it may have already even completed processing all the users
-    //and then there would be no next batch, it wouldnt then have anything to send to the queue again, then marking it as successfu and discarding it from the queue
     if (projectsReq.LastEvaluatedKey) {
       await sqsQueue.send(
         new SendMessageCommand({
@@ -197,6 +188,7 @@ export const handler: Handler = async (event: SQSEvent | null) => {
       );
     }
 
+    console.log("completed successfully");
     return;
   } catch (error: unknown) {
     //this would only catch errors caused when the initial fetch for all expired subs fails or when the sqs send fails

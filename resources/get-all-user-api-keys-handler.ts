@@ -10,7 +10,6 @@ const region = process.env.REGION;
 const tableName = process.env.TABLE_NAME;
 
 const client = new DynamoDBClient({ region });
-
 const dynamo = DynamoDBDocumentClient.from(client);
 
 interface CustomAPIGatewayEventV2 extends APIGatewayProxyEventV2 {
@@ -42,9 +41,11 @@ export const handler = async (event: CustomAPIGatewayEventV2) => {
         },
         Limit: 10,
         ScanIndexForward: false,
-        ProjectionExpression: "createdAt, apiKeyInfo.apiKey, id, projectName",
+        ProjectionExpression: "createdAt, apiKey, id, projectName, currentPlan",
       })
     );
+
+    console.log("completed successfully");
 
     return { statusCode: 200, body: JSON.stringify(usersApiKeys.Items) };
   } catch (error: unknown) {

@@ -202,7 +202,6 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
               apiKey: apiKey.value,
               apiKeyInfo: {
                 apiKeyId: apiKey.id,
-                apiKey: apiKey.value,
                 usagePlanId: webHookEvent.meta_data.usagePlanId,
               },
               cardTokenInfo: {
@@ -220,7 +219,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
       }
 
       //if there is an existing project, update the next payment date
-      //if they changed their plan, update the usage plan
+      //if the plan has changed, update the usage plan
       if (
         existingProject.Item.apiKeyInfo.usagePlanId !==
         webHookEvent.meta_data.usagePlanId
@@ -261,6 +260,8 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
           },
         })
       );
+
+      console.log("completed successfully");
     }
 
     return {

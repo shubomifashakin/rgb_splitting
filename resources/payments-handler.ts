@@ -33,6 +33,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
   if (!success) {
     return { statusCode: 400, body: JSON.stringify(error.issues), headers };
   }
+
   console.log(data);
 
   try {
@@ -83,17 +84,12 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     if (!paymentReq.ok) {
       const res = await paymentReq.json();
 
-      console.error("failed to initialize payment", res);
-
-      return {
-        statusCode: 500,
-        body: JSON.stringify({ message: "Internal Server Error" }),
-        headers,
-      };
+      throw new Error(`Failed to initialize payment ${JSON.stringify(res)}`);
     }
 
     const paymentResponse = await paymentReq.json();
 
+    console.log("completed successfully");
     return {
       statusCode: 200,
       body: JSON.stringify(paymentResponse),
@@ -101,14 +97,10 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     };
   } catch (error: unknown) {
     console.error(
-      `ERROR INITIATING PAYMENT FOR USER ${data.userId} ${data.email}`,
+      `ERROR INITIALIZING PAYMENT FOR USER ${data.userId} ${data.email}`,
       error
     );
 
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ message: "Internal Server Error" }),
-      headers,
-    };
+    throw error;
   }
 };

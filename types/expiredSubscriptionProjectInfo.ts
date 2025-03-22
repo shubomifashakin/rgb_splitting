@@ -7,7 +7,6 @@ export interface ExpiredProject {
   currentPlan: string;
 
   apiKeyInfo: {
-    apiKey: string;
     apiKeyId: string;
     usagePlanId: string;
   };

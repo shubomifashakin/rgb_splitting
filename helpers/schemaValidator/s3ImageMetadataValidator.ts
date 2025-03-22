@@ -1,15 +1,13 @@
 import { z } from "zod";
 
-import { normalizedChannelValidator } from "./normalizedChannelsValidator";
-
 import { grainValidator } from "./processValidator";
 
-export const s3ImageMetadataValidator = z.object({
-  project_name: z.string(),
+import { normalizedChannelValidator } from "./normalizedChannelsValidator";
 
+export const s3ImageMetadataValidator = z.object({
   project_id: z.string().uuid(),
 
-  grain: z
+  grains: z
     .string()
     .refine(
       (value) => {

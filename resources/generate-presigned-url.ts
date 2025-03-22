@@ -14,6 +14,7 @@ import {
   PlanType,
   defaultGrain,
   defaultNormalizedChannel,
+  processedImagesRouteVar,
 } from "../helpers/constants";
 import { processValidator } from "../helpers/schemaValidator/processValidator";
 import { planSizesValidator } from "../helpers/schemaValidator/planSizesValidator";
@@ -47,6 +48,12 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     };
   }
 
+  const apiKey = event.headers?.["x-api-key"];
+
+  if (!apiKey) {
+    return { statusCode: 400, body: JSON.stringify("Unauthorized"), headers };
+  }
+
   const body = JSON.parse(event.body);
   console.log("event body", body);
 
@@ -64,12 +71,11 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
 
   const { channels, grain } = data;
 
+  //if everything in the array the user sent is a default then do not proceed because
   //this process would not generate a new image, so do not respond
   if (
-    channels.length === defaultNormalizedChannel.length &&
     channels.every((channel) => defaultNormalizedChannel.includes(channel)) &&
-    grain.length === defaultGrain.length &&
-    grain.every((dist) => defaultGrain.includes(dist))
+    grain.every((grain) => defaultGrain.includes(grain))
   ) {
     return {
       statusCode: 400,
@@ -78,12 +84,6 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
       }),
       headers,
     };
-  }
-
-  const apiKey = event.headers?.["x-api-key"];
-
-  if (!apiKey) {
-    return { statusCode: 400, body: JSON.stringify("Unauthorized"), headers };
   }
 
   //get the project the apikey is attached to && the maxPlan sizes from secret manager
@@ -96,7 +96,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
         ExpressionAttributeValues: {
           ":apiKey": apiKey,
         },
-        ProjectionExpression: "id, userId, currentPlan, projectName",
+        ProjectionExpression: "id, userId, currentPlan",
         Limit: 1,
       })
     ),
@@ -155,25 +155,9 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     );
   }
 
-  const imageKey = uuid();
+  const imageKey = `${projectData.id}/${processedImagesRouteVar}/${uuid()}`;
 
   try {
-    //this was not good enough for my use case, it wasnt alowing me limit the file size & content type
-    // const command = new PutObjectCommand({
-    //   Bucket: s3Bucket,
-    //   Key: imageKey,
-    //   Metadata: {
-    //     channels: channels || "",
-    //     grain: grain ? String(grain) : "",
-    //     projectId: project.Items[0].id,
-    //   },
-    //   ContentType: "image/png",
-    //   // ContentLength: 1 * 1024 * 1024, //this limits the file size that a user can upload to thr presigned url
-    // });
-
-    //they have 2 minutes to upload the image
-    // const signedUrl = await getSignedUrl(s3, command, { expiresIn: 180 });
-
     const grainValue = JSON.stringify(grain);
     const channelsValue = JSON.stringify(channels);
 
@@ -181,8 +165,8 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
       Bucket: s3Bucket,
       Key: imageKey,
       Conditions: [
-        { bucket: s3Bucket },
         { key: imageKey },
+        { bucket: s3Bucket },
 
         ["starts-with", "$Content-Type", "image/"],
         [
@@ -191,19 +175,17 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
           maxSizesData[projectData.currentPlan as keyof typeof maxSizesData],
         ], //the content length should not exceed this rAnge
 
+        ["eq", "$x-amz-meta-grains", grainValue],
         ["eq", "$x-amz-meta-channels", channelsValue],
         ["eq", "$x-amz-meta-project_id", projectData.id],
-        ["eq", "$x-amz-meta-grain", grainValue],
-        ["eq", "$x-amz-meta-project_name", projectData.projectName],
       ],
 
       //other fields that we want returned with the url, they must be attached to the formdata
       //if the user changes it, it wont work 😭😭 got them right?
       Fields: {
-        "x-amz-meta-grain": grainValue,
+        "x-amz-meta-grains": grainValue,
         "x-amz-meta-channels": channelsValue,
         "x-amz-meta-project_id": projectData.id,
-        "x-amz-meta-project_name": projectData.projectName,
       },
 
       Expires: 180,
@@ -212,6 +194,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     //create a record in another db, the key of the image should be the id
     //then return the poll url, which should be a get endpoint like this .../image/{id} id being the image key
 
+    console.log("completed successfully");
     return { statusCode: 200, body: JSON.stringify({ url, fields }), headers };
   } catch (error: unknown) {
     console.error("ERROR GENERATING PRESIGNED URL", error);

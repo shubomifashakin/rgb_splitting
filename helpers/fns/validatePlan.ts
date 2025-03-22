@@ -4,7 +4,7 @@ import {
 } from "@aws-sdk/client-secrets-manager";
 
 import { PaymentPlan, PaymentPlansResponse } from "../../types/paymentPlans";
-import { usagePlanValidator } from "../schemaValidator/validators";
+import { usagePlanValidator } from "../schemaValidator/usagePlanValidator";
 
 /**
  * Fetches plans from the payment gateway and validates the specified plan name.

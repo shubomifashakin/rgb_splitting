@@ -30,7 +30,7 @@ import { Queue } from "aws-cdk-lib/aws-sqs";
 import { Secret } from "aws-cdk-lib/aws-secretsmanager";
 import { SqsEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
 
-import { PlanType } from "../helpers/constants";
+import { PlanType, processedImagesRouteVar } from "../helpers/constants";
 
 dotenv.config();
 
@@ -118,6 +118,26 @@ export class RgbSplittingStack extends cdk.Stack {
       },
     });
 
+    const processedImagesTable = new Table(
+      this,
+      `${projectPrefix}-processed-images-table-sh-2`,
+      {
+        tableName: `${projectPrefix}-processed-images-table-sh-2`,
+        partitionKey: {
+          name: "imageId",
+          type: AttributeType.STRING,
+        },
+        sortKey: {
+          name: "projectId",
+          type: AttributeType.STRING,
+        },
+        pointInTimeRecoverySpecification: {
+          pointInTimeRecoveryEnabled: true,
+        },
+        removalPolicy: cdk.RemovalPolicy.DESTROY,
+      }
+    );
+
     //this queue is used to store messages that failed to be downgraded
     const cancelSubscriptionDeadLetterQueue = new Queue(
       this,
@@ -188,7 +208,7 @@ export class RgbSplittingStack extends cdk.Stack {
         environment: {
           REGION: this.region,
           BUCKET_NAME: s3Bucket.bucketName,
-          TABLE_NAME: projectsTable.tableName,
+          RESULTS_TABLE_NAME: processedImagesTable.tableName,
         },
         entry: "./resources/splitting-handler.ts",
         handler: "handler",
@@ -345,6 +365,25 @@ export class RgbSplittingStack extends cdk.Stack {
       }
     );
 
+    const getProcessedImagesLambda = new NodejsFunction(
+      this,
+      `${projectPrefix}-get-processed-images-lambda`,
+      {
+        functionName: `${projectPrefix}-get-processed-images-lambda`,
+        description:
+          "This lambda is used to get the processed images for an image",
+        runtime: Runtime.NODEJS_22_X,
+        entry: "./resources/get-processed-images-handler.ts",
+        handler: "handler",
+        environment: {
+          REGION: this.region,
+          PROCESSED_IMAGES_TABLE_NAME: processedImagesTable.tableName,
+        },
+        timeout: cdk.Duration.seconds(10),
+      }
+    );
+
+    //let the resubscribe lambda also receive events from the queue
     resubscribeLambda.addEventSource(
       new SqsEventSource(resubscribeSubscriptionQueue, { batchSize: 10 })
     );
@@ -363,6 +402,31 @@ export class RgbSplittingStack extends cdk.Stack {
 
     snsTopic.addSubscription(
       new cdk.aws_sns_subscriptions.EmailSubscription(alarmSubscriptionEmail)
+    );
+
+    //this alarm is triggered if there have been 3 errors or more in the splitting lambda in the last 10 minutes
+    const splittingErrorAlarm = new cdk.aws_cloudwatch.Alarm(
+      this,
+      `${projectPrefix}-splitting-errors-alarm`,
+      {
+        metric: splittingLambda.metricErrors({
+          period: cdk.Duration.minutes(10),
+          statistic: "sum",
+        }),
+        evaluationPeriods: 1,
+        threshold: 3,
+        comparisonOperator:
+          cdk.aws_cloudwatch.ComparisonOperator
+            .GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+        actionsEnabled: true,
+        alarmName: `${projectPrefix}-splitting-alarm`.toUpperCase(),
+        alarmDescription:
+          "There have been 3 or more errors in the lambda for splitting images in the last 10 minutes",
+      }
+    );
+
+    splittingErrorAlarm.addAlarmAction(
+      new cdk.aws_cloudwatch_actions.SnsAction(snsTopic)
     );
 
     //this alarm is triggered if the resubscribe lambda fails 2 times in 10 minutes
@@ -386,6 +450,10 @@ export class RgbSplittingStack extends cdk.Stack {
       }
     );
 
+    resubscribeErrorAlarm.addAlarmAction(
+      new cdk.aws_cloudwatch_actions.SnsAction(snsTopic)
+    );
+
     //this alarm is triggered if the webhook lambda fails 1 time in 10 minutes
     const webHookErrorAlarm = new cdk.aws_cloudwatch.Alarm(
       this,
@@ -407,6 +475,10 @@ export class RgbSplittingStack extends cdk.Stack {
       }
     );
 
+    webHookErrorAlarm.addAlarmAction(
+      new cdk.aws_cloudwatch_actions.SnsAction(snsTopic)
+    );
+
     const generatePresignedUrlAlarm = new cdk.aws_cloudwatch.Alarm(
       this,
       `${projectPrefix}-generate-presigned-url-alarm`,
@@ -426,6 +498,60 @@ export class RgbSplittingStack extends cdk.Stack {
         alarmDescription:
           "There have been 4 or more errors in the lambda for generating presigned URLs in the last 10 minutes",
       }
+    );
+
+    generatePresignedUrlAlarm.addAlarmAction(
+      new cdk.aws_cloudwatch_actions.SnsAction(snsTopic)
+    );
+
+    //this alarm is triggered if the trigger charge lambda fails 4 times in 10 minutes
+    const triggerChargeErrorAlarm = new cdk.aws_cloudwatch.Alarm(
+      this,
+      `${projectPrefix}-trigger-charge-errors-alarm`,
+      {
+        metric: triggerChargeLambda.metricErrors({
+          period: cdk.Duration.minutes(10),
+          statistic: "sum",
+        }),
+        threshold: 4,
+        evaluationPeriods: 1,
+        comparisonOperator:
+          cdk.aws_cloudwatch.ComparisonOperator
+            .GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+        actionsEnabled: true,
+        alarmName: `${projectPrefix}-payments-alarm`.toUpperCase(),
+        alarmDescription:
+          "There have been 4 or more errors in the lambda for payments in the last 10 minutes",
+      }
+    );
+
+    triggerChargeErrorAlarm.addAlarmAction(
+      new cdk.aws_cloudwatch_actions.SnsAction(snsTopic)
+    );
+
+    //this alarm is triggered if there have been 5 failures in the lambda for getting processed results in the last 10 minutes
+    const getProcessedResultsAlaram = new cdk.aws_cloudwatch.Alarm(
+      this,
+      `${projectPrefix}-get-processed-results-alarm`,
+      {
+        metric: getProcessedImagesLambda.metricErrors({
+          period: cdk.Duration.minutes(10),
+          statistic: "sum",
+        }),
+        threshold: 5,
+        evaluationPeriods: 1,
+        comparisonOperator:
+          cdk.aws_cloudwatch.ComparisonOperator
+            .GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+        actionsEnabled: true,
+        alarmName: `${projectPrefix}-get-processed-results-alarm`.toUpperCase(),
+        alarmDescription:
+          "There have been 5 or more errors in the lambda for getting processed results in the last 10 minutes",
+      }
+    );
+
+    getProcessedResultsAlaram.addAlarmAction(
+      new cdk.aws_cloudwatch_actions.SnsAction(snsTopic)
     );
 
     //this alarm is triggered if there are messages in the cancel subscription dead letter queue
@@ -451,6 +577,10 @@ export class RgbSplittingStack extends cdk.Stack {
       }
     );
 
+    cancelSubscriptionDLQAlarm.addAlarmAction(
+      new cdk.aws_cloudwatch_actions.SnsAction(snsTopic)
+    );
+
     //this alarm is triggered if there are messages in the resubscription dead letter queue
     const resubscriptionDLQAlarm = new cdk.aws_cloudwatch.Alarm(
       this,
@@ -472,22 +602,6 @@ export class RgbSplittingStack extends cdk.Stack {
         alarmDescription:
           "There are messages in the resubscription dead letter queue",
       }
-    );
-
-    resubscribeErrorAlarm.addAlarmAction(
-      new cdk.aws_cloudwatch_actions.SnsAction(snsTopic)
-    );
-
-    webHookErrorAlarm.addAlarmAction(
-      new cdk.aws_cloudwatch_actions.SnsAction(snsTopic)
-    );
-
-    generatePresignedUrlAlarm.addAlarmAction(
-      new cdk.aws_cloudwatch_actions.SnsAction(snsTopic)
-    );
-
-    cancelSubscriptionDLQAlarm.addAlarmAction(
-      new cdk.aws_cloudwatch_actions.SnsAction(snsTopic)
     );
 
     resubscriptionDLQAlarm.addAlarmAction(
@@ -526,15 +640,6 @@ export class RgbSplittingStack extends cdk.Stack {
       },
     });
 
-    const prodStage = new Stage(this, `${projectPrefix}-prod-stage`, {
-      stageName: "prod",
-      deployment: new Deployment(this, `${projectPrefix}-api-prod-deployment`, {
-        api: rgbRestApi,
-        description: "The prod api stage deployment for the rgb splitting",
-      }),
-      description: "The prod api stage for the rgb splitting",
-    });
-
     //create the usage plans
     const freeTierUsagePlan = new UsagePlan(
       this,
@@ -542,10 +647,7 @@ export class RgbSplittingStack extends cdk.Stack {
       {
         name: `${projectPrefix}-free-plan`,
         description: "Free tier usage plan, 200 Requests per month",
-        apiStages: [
-          { stage: rgbRestApi.deploymentStage },
-          { stage: prodStage },
-        ],
+        apiStages: [{ stage: rgbRestApi.deploymentStage }],
         quota: {
           limit: 200,
           period: Period.MONTH,
@@ -560,7 +662,7 @@ export class RgbSplittingStack extends cdk.Stack {
     const proTierUsagePlan = new UsagePlan(this, `${projectPrefix}-pro-plan`, {
       name: `${projectPrefix}-pro-plan`,
       description: "Pro tier usage plan, 1000 Requests per month",
-      apiStages: [{ stage: rgbRestApi.deploymentStage }, { stage: prodStage }],
+      apiStages: [{ stage: rgbRestApi.deploymentStage }],
       quota: {
         limit: 1000,
         period: Period.MONTH,
@@ -577,10 +679,7 @@ export class RgbSplittingStack extends cdk.Stack {
       {
         name: `${projectPrefix}-executive-plan`,
         description: "Executive tier usage plan, 2500 Requests per month",
-        apiStages: [
-          { stage: rgbRestApi.deploymentStage },
-          { stage: prodStage },
-        ],
+        apiStages: [{ stage: rgbRestApi.deploymentStage }],
         quota: {
           limit: 2500,
           period: Period.MONTH,
@@ -640,6 +739,12 @@ export class RgbSplittingStack extends cdk.Stack {
     //route to request payments
     const triggerChargeRoute = v1Root.addResource("trigger-payment");
 
+    //route to get processed results
+    const getProcessedImagesRoute = v1Root
+      .addResource("{projectId}")
+      .addResource(processedImagesRouteVar)
+      .addResource("{imageId}");
+
     generatePresignedUrlRoute.addMethod(
       HttpMethod.POST,
       new LambdaIntegration(generatePresignedUrlLambda),
@@ -667,42 +772,9 @@ export class RgbSplittingStack extends cdk.Stack {
       new LambdaIntegration(triggerChargeLambda)
     );
 
-    //construct the prod stage ARN
-    const prodStageArn = `arn:aws:execute-api:${cdk.Stack.of(this).region}:${
-      cdk.Stack.of(this).account
-    }:${rgbRestApi.restApiId}/prod`;
-
-    //alow the prod stage invoke our lambdas
-    generatePresignedUrlLambda.addPermission(
-      `${projectPrefix}-allow-prod-stage-permission`,
-      {
-        principal: new ServicePrincipal("apigateway.amazonaws.com"),
-        sourceArn: `${prodStageArn}/POST/v1/process`,
-      }
-    );
-
-    webHookLambda.addPermission(
-      `${projectPrefix}-allow-prod-stage-permission`,
-      {
-        principal: new ServicePrincipal("apigateway.amazonaws.com"),
-        sourceArn: `${prodStageArn}/POST/v1/webhook`,
-      }
-    );
-
-    getUsersApiKeysLambda.addPermission(
-      `${projectPrefix}-allow-prod-stage-permission`,
-      {
-        principal: new ServicePrincipal("apigateway.amazonaws.com"),
-        sourceArn: `${prodStageArn}/GET/v1/keys`,
-      }
-    );
-
-    triggerChargeLambda.addPermission(
-      `${projectPrefix}-allow-prod-stage-permission`,
-      {
-        principal: new ServicePrincipal("apigateway.amazonaws.com"),
-        sourceArn: `${prodStageArn}/POST/v1/trigger-payment`,
-      }
+    getProcessedImagesRoute.addMethod(
+      HttpMethod.GET,
+      new LambdaIntegration(getProcessedImagesLambda)
     );
 
     //grant the webhook Lambda permission to create new ApiKeys & fetch all our available keys
@@ -878,5 +950,9 @@ export class RgbSplittingStack extends cdk.Stack {
     projectsTable.grantReadData(getUsersApiKeysLambda);
 
     projectsTable.grantReadWriteData(cancelSubscriptionLambda);
+
+    processedImagesTable.grantWriteData(splittingLambda);
+    processedImagesTable.grantReadData(getProcessedImagesLambda);
+    // processedImagesTable.grantReadData(generatePresignedUrlLambda);
   }
 }

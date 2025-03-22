@@ -3,12 +3,18 @@ import { z } from "zod";
 import { normalizeChannel } from "../fns/channelsNormalization";
 
 import { Channels } from "../../types/channels";
-import { defaultChannel, defaultGrain } from "../constants";
+import {
+  defaultChannel,
+  defaultGrain,
+  maxProcessesInArray,
+} from "../constants";
 
 const possibleChannels = Object.values(Channels);
 
 //channels could either be a string or a string array
 //the resulting value will always bbe an array
+//if the user specified just a string and not an array, use that channel value for all the grains
+//if they specified an array, then just use that array
 export const channelsValidator = z
   .union([
     z
@@ -21,7 +27,7 @@ export const channelsValidator = z
     //it must be a non emoty array
     z
       .array(z.string().transform((val) => val.toLowerCase()))
-      .max(3)
+      .max(maxProcessesInArray)
       .refine(
         (arr) =>
           arr.every((val) => possibleChannels.includes(val as Channels)) &&
@@ -34,7 +40,7 @@ export const channelsValidator = z
   .default(defaultChannel);
 
 //grain could either be a number or a number array
-//the resulting value will be an array
+//the resulting value will always be an array
 //if the user specified just a number and not an array, use that grain value for all the channels
 //if they specified an array, then just use that array
 export const grainValidator = z
@@ -43,7 +49,7 @@ export const grainValidator = z
 
     z
       .array(z.number().transform((val) => Math.min(255, val)))
-      .max(3)
+      .max(maxProcessesInArray)
       .refine((arr) => arr.length, {
         message: "No grain values provided in array",
       }),
@@ -67,5 +73,5 @@ export const processValidator = z
     }
   );
 
-export type ChannelType = z.infer<typeof channelsValidator>;
 export type grainType = z.infer<typeof grainValidator>;
+export type ChannelType = z.infer<typeof channelsValidator>;

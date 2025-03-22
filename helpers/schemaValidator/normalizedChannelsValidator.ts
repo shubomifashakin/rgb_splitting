@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { maxProcessesInArray } from "../constants";
 import { NormalizedChannels } from "../../types/channels";
 
 const channels = Object.values(NormalizedChannels);
@@ -10,4 +11,4 @@ function isChannels(value: unknown): value is NormalizedChannels {
 
 export const normalizedChannelValidator = z
   .array(z.string().refine(isChannels))
-  .max(3);
+  .max(maxProcessesInArray);
