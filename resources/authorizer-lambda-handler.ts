@@ -1,6 +1,7 @@
 import { Callback, Handler } from "aws-lambda";
 import {
   GetSecretValueCommand,
+  GetSecretValueCommandOutput,
   SecretsManagerClient,
 } from "@aws-sdk/client-secrets-manager";
 
@@ -18,6 +19,8 @@ const secretClient = new SecretsManagerClient({
   region: "us-east-1",
 });
 
+let publicKey: GetSecretValueCommandOutput | undefined;
+
 export const handler: Handler = async (
   event: any,
   context,
@@ -26,14 +29,7 @@ export const handler: Handler = async (
   const authToken = event.authorizationToken;
 
   if (!authToken) {
-    console.error(
-      "NO AUTHORIZATION TOKEN",
-      JSON.stringify({
-        date: new Date(),
-        error: "No token provided",
-        context: "Get all users Api keys",
-      })
-    );
+    console.error("NO AUTHORIZATION TOKEN PROVIDED");
 
     return {
       statusCode: 400,
@@ -46,12 +42,20 @@ export const handler: Handler = async (
 
   const token = authToken.split(" ")[1];
 
-  try {
-    const publicKey = await secretClient.send(
-      new GetSecretValueCommand({ SecretId: secret_name })
-    );
+  if (typeof token !== "string") {
+    return { statusCode: 400, body: "Bad Request - Invalid Token" };
+  }
 
+  try {
     if (!publicKey) {
+      console.log("cold start, fetching secret from secret manager");
+
+      publicKey = await secretClient.send(
+        new GetSecretValueCommand({ SecretId: secret_name })
+      );
+    }
+
+    if (!publicKey.SecretString) {
       return { statusCode: 500, body: JSON.stringify("Internal Server Error") };
     }
 
@@ -103,6 +107,8 @@ function generatePolicy(
     ...authResponse,
     ...(metadata && { context: metadata }),
   };
+
+  console.log("completed successfully");
 
   return authResponseWithContext;
 }

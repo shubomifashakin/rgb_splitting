@@ -162,7 +162,7 @@ export class RgbSplittingStack extends cdk.Stack {
       {
         queueName: `${props.variables.projectPrefix}-cancel-subscription-queue`,
         retentionPeriod: cdk.Duration.days(4),
-        visibilityTimeout: cdk.Duration.minutes(1.2),
+        visibilityTimeout: cdk.Duration.minutes(1.2), //once the message is sent out, if the message is not processed before this timer ends, it would reappppear
         deadLetterQueue: {
           maxReceiveCount: 2,
           queue: cancelSubscriptionDeadLetterQueue,
@@ -349,6 +349,7 @@ export class RgbSplittingStack extends cdk.Stack {
         },
         timeout: cdk.Duration.minutes(2),
         recursiveLoop: RecursiveLoop.ALLOW, // got an email from aws thar my function was terminated, so i added this, the resubscribe lambda uses a recursive design
+        memorySize: 1536,
       }
     );
 
@@ -571,6 +572,32 @@ export class RgbSplittingStack extends cdk.Stack {
       new cdk.aws_cloudwatch_actions.SnsAction(snsTopic)
     );
 
+    //this alarm is triggered if there have been 5 failures in the lambda for getting users apikeys in the last 10 minutes
+    const getUsersApiKeysAlarm = new cdk.aws_cloudwatch.Alarm(
+      this,
+      `${props.variables.projectPrefix}-get-users-apikeys-alarm`,
+      {
+        metric: getUsersApiKeysLambda.metricErrors({
+          period: cdk.Duration.minutes(10),
+          statistic: "sum",
+        }),
+        threshold: 5,
+        evaluationPeriods: 1,
+        comparisonOperator:
+          cdk.aws_cloudwatch.ComparisonOperator
+            .GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+        actionsEnabled: true,
+        alarmName:
+          `${props.variables.projectPrefix}-get-users-apikeys-alarm`.toUpperCase(),
+        alarmDescription:
+          "There have been 5 or more errors in the lambda for getting users apikeys in the last 10 minutes",
+      }
+    );
+
+    getUsersApiKeysAlarm.addAlarmAction(
+      new cdk.aws_cloudwatch_actions.SnsAction(snsTopic)
+    );
+
     //this alarm is triggered if there are messages in the cancel subscription dead letter queue
     const cancelSubscriptionDLQAlarm = new cdk.aws_cloudwatch.Alarm(
       this,
@@ -717,6 +744,20 @@ export class RgbSplittingStack extends cdk.Stack {
       }
     );
 
+    /**
+     Usage plans are stored in AWS Secrets Manager to resolve circular dependency issues between the
+     1. Usage plans
+       2. Lambda functions
+      3. REST API integration
+     
+    Instead of using the standard `grantRead` method, which would  also create a dependency cycle, i:
+     1. created th usage plans & stored them in Secrets Manager
+      2. Integrate APIs with Lambda functions
+      3. Directly attach IAM policies to Lambda functions using the secret's name we passed into the usagePlanSecret construct, this way
+      the lambda has access to fetch the usage plans from the secret manager
+     
+      This approach breaks the dependency cycle while maintaining proper access control.
+     */
     const usagePlansSecret = new Secret(this, `${availablePlansSecretName}`, {
       secretName: `${availablePlansSecretName}`,
       secretObjectValue: {
@@ -783,7 +824,8 @@ export class RgbSplittingStack extends cdk.Stack {
 
     getProcessedImagesRoute.addMethod(
       HttpMethod.GET,
-      new LambdaIntegration(getProcessedImagesLambda)
+      new LambdaIntegration(getProcessedImagesLambda),
+      { apiKeyRequired: true }
     );
 
     //grant the webhook Lambda permission to create new ApiKeys & fetch all our available keys

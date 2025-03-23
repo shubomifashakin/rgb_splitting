@@ -13,6 +13,10 @@ import {
   grainType,
   ChannelType,
 } from "../helpers/schemaValidator/processValidator";
+import {
+  default_grain,
+  default_normalized_channel,
+} from "../helpers/constants";
 
 const channelFns: Record<
   NormalizedChannels,
@@ -54,8 +58,9 @@ export async function processImage({
       channels
         .map((channel, index) => {
           const grain = grains[index];
-          //remove any process that result in the same image uploaded
-          if (channel === NormalizedChannels.REDGREENBLUE && grain === 0) {
+
+          //skip any process that result in the same image uploaded
+          if (isTheSameImage({ channel, grain })) {
             return;
           }
 
@@ -90,8 +95,8 @@ export async function processImage({
         .map((channel, index) => {
           const grain = grains[index] ?? 0;
 
-          //remove any process that result in the same image uploaded
-          if (channel === NormalizedChannels.REDGREENBLUE && grain === 0) {
+          //skip any process that result in the same image uploaded
+          if (isTheSameImage({ channel, grain })) {
             return;
           }
 
@@ -131,8 +136,8 @@ export async function processImage({
             return;
           }
 
-          //remove any process that result in the same image uploaded
-          if (channel === NormalizedChannels.REDGREENBLUE && grain === 0) {
+          //skip any process that result in the same image uploaded
+          if (isTheSameImage({ channel, grain })) {
             return;
           }
 
@@ -166,8 +171,8 @@ export async function processImage({
         .map((grain) => {
           const channel = channels[0];
 
-          //remove any process that result in the same image uploaded
-          if (channel === NormalizedChannels.REDGREENBLUE && grain === 0) {
+          //skip any process that result in the same image uploaded
+          if (isTheSameImage({ channel, grain })) {
             return;
           }
 
@@ -201,8 +206,8 @@ export async function processImage({
         .map((channel) => {
           const grain = grains[0];
 
-          //remove any process that results in the same image uploaded
-          if (channel === NormalizedChannels.REDGREENBLUE && grain === 0) {
+          //skip any process that results in the same image uploaded
+          if (isTheSameImage({ channel, grain })) {
             return;
           }
 
@@ -247,4 +252,14 @@ function formImageKeyAndUrl({
   const url = `https://${bucketName}.s3.us-east-1.amazonaws.com/${key}`;
 
   return { key, url };
+}
+
+function isTheSameImage({
+  channel,
+  grain,
+}: {
+  channel: NormalizedChannels;
+  grain: number;
+}) {
+  return channel === default_normalized_channel && grain === default_grain;
 }

@@ -52,6 +52,6 @@ export const handler = async (event: CustomAPIGatewayEventV2) => {
   } catch (error: unknown) {
     console.log("FAILED TO GET USERS API KEYS FROM DB", error);
 
-    return { statusCode: 500, body: "Internal server error" };
+    throw error;
   }
 };

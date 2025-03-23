@@ -14,6 +14,9 @@ export enum PROJECT_STATUS {
 export const maxProcessesInArray = 3;
 export const processedImagesRouteVar = "image";
 
-export const defaultGrain = [0];
+export const default_grain = 0;
+export const default_normalized_channel = NormalizedChannels.REDGREENBLUE;
+
+export const defaultGrain = [default_grain];
 export const defaultChannel = Channels.RGB;
-export const defaultNormalizedChannel = [NormalizedChannels.REDGREENBLUE];
+export const defaultNormalizedChannel = [default_normalized_channel];

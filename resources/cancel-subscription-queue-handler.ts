@@ -185,7 +185,9 @@ export const handler = async (event: SQSEvent): Promise<SQSBatchResponse> => {
           })
         );
 
-        //send a message to the user stating that they have been downgraded
+        console.log("completed successfully");
+
+        //TODO: send a message to the user stating that they have been downgraded
         //your project {nameOfProject} has been downgraded to free plan
       } catch (error) {
         console.error(error);
