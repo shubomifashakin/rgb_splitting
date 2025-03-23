@@ -1,11 +1,11 @@
 import { z } from "zod";
 
 import { grainValidator } from "./processValidator";
-
+import { projectIdValidator } from "./projectIdValidator";
 import { normalizedChannelValidator } from "./normalizedChannelsValidator";
 
 export const s3ImageMetadataValidator = z.object({
-  project_id: z.string().uuid(),
+  project_id: projectIdValidator,
 
   grains: z
     .string()

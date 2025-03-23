@@ -3,10 +3,6 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { APIGatewayProxyEventV2, Handler } from "aws-lambda";
 import { createPresignedPost } from "@aws-sdk/s3-presigned-post";
 import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
-import {
-  GetSecretValueCommand,
-  SecretsManagerClient,
-} from "@aws-sdk/client-secrets-manager";
 
 import { v4 as uuid } from "uuid";
 
@@ -17,18 +13,23 @@ import {
   processedImagesRouteVar,
 } from "../helpers/constants";
 import { processValidator } from "../helpers/schemaValidator/processValidator";
-import { planSizesValidator } from "../helpers/schemaValidator/planSizesValidator";
+
+import { ProjectInfo } from "../types/projectInfo";
 
 const region = process.env.REGION!;
 const s3Bucket = process.env.BUCKET_NAME!;
 const tableName = process.env.TABLE_NAME!;
-const maxPlanSizesSecretName = process.env.MAX_PLAN_SIZES_SECRET_NAME!;
+
+const maxPlanSizes = {
+  [PlanType.Free]: 10 * 1024 * 1024,
+  [PlanType.Pro]: 20 * 1024 * 1024,
+  [PlanType.Executive]: 80 * 1024 * 1024,
+};
 
 const s3 = new S3Client({
   region,
 });
 const ddbClient = new DynamoDBClient({ region });
-const secretClient = new SecretsManagerClient({ region });
 const dynamoClient = DynamoDBDocumentClient.from(ddbClient);
 
 export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
@@ -87,31 +88,18 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
   }
 
   //get the project the apikey is attached to && the maxPlan sizes from secret manager
-  const [project, maxPlanSizes] = await Promise.all([
-    dynamoClient.send(
-      new QueryCommand({
-        TableName: tableName,
-        KeyConditionExpression: "apiKey = :apiKey",
-        IndexName: "apiKeyIndex",
-        ExpressionAttributeValues: {
-          ":apiKey": apiKey,
-        },
-        ProjectionExpression: "id, userId, currentPlan",
-        Limit: 1,
-      })
-    ),
-    secretClient.send(
-      new GetSecretValueCommand({
-        SecretId: maxPlanSizesSecretName,
-      })
-    ),
-  ]);
-
-  if (!maxPlanSizes.SecretString) {
-    console.error("Max plan size secret is empty");
-
-    throw new Error("Max plan size secret is empty");
-  }
+  const project = await dynamoClient.send(
+    new QueryCommand({
+      TableName: tableName,
+      KeyConditionExpression: "apiKey = :apiKey",
+      IndexName: "apiKeyIndex",
+      ExpressionAttributeValues: {
+        ":apiKey": apiKey,
+      },
+      ProjectionExpression: "projectId, userId, currentPlan",
+      Limit: 1,
+    })
+  );
 
   if (!project.Items || !project.Items.length) {
     return {
@@ -123,7 +111,10 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     };
   }
 
-  const projectData = project.Items[0];
+  const projectData = project.Items[0] as Pick<
+    ProjectInfo,
+    "projectId" | "userId" | "currentPlan"
+  >;
 
   //if a free user tried to get multiple channels or grains from an image, shut it down. you not paying enough my g 🤷‍♂️
   if (
@@ -139,23 +130,9 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     };
   }
 
-  const parsedMaxPlanSizes = JSON.parse(maxPlanSizes.SecretString);
-
-  const {
-    data: maxSizesData,
-    error: maxSizesError,
-    success: maxSizesSuccess,
-  } = planSizesValidator.safeParse(parsedMaxPlanSizes);
-
-  if (!maxSizesSuccess) {
-    console.log(maxSizesError.message);
-
-    throw new Error(
-      `Invalid max plan sizes schema received from secret manager ${maxSizesError.message}`
-    );
-  }
-
-  const imageKey = `${projectData.id}/${processedImagesRouteVar}/${uuid()}`;
+  const imageKey = `${
+    projectData.projectId
+  }/${processedImagesRouteVar}/${uuid()}`;
 
   try {
     const grainValue = JSON.stringify(grain);
@@ -172,12 +149,12 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
         [
           "content-length-range",
           1,
-          maxSizesData[projectData.currentPlan as keyof typeof maxSizesData],
+          maxPlanSizes[projectData.currentPlan as keyof typeof maxPlanSizes],
         ], //the content length should not exceed this rAnge
 
         ["eq", "$x-amz-meta-grains", grainValue],
         ["eq", "$x-amz-meta-channels", channelsValue],
-        ["eq", "$x-amz-meta-project_id", projectData.id],
+        ["eq", "$x-amz-meta-project_id", projectData.projectId],
       ],
 
       //other fields that we want returned with the url, they must be attached to the formdata
@@ -185,7 +162,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
       Fields: {
         "x-amz-meta-grains": grainValue,
         "x-amz-meta-channels": channelsValue,
-        "x-amz-meta-project_id": projectData.id,
+        "x-amz-meta-project_id": projectData.projectId,
       },
 
       Expires: 180,

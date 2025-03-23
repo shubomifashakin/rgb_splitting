@@ -12,12 +12,6 @@ export enum NormalizedChannels {
  * This is the enum that is used to represent the possible channels the user can pass.
  */
 export enum Channels {
-  RGB = "rgb",
-  RBG = "rbg",
-  GRB = "grb",
-  GBR = "gbr",
-  BRG = "brg",
-  BGR = "bgr",
   R = "r",
   G = "g",
   B = "b",
@@ -27,4 +21,10 @@ export enum Channels {
   GB = "gb",
   BR = "br",
   BG = "bg",
+  RGB = "rgb",
+  RBG = "rbg",
+  GRB = "grb",
+  GBR = "gbr",
+  BRG = "brg",
+  BGR = "bgr",
 }

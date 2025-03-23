@@ -6,6 +6,7 @@ import {
 } from "@aws-sdk/client-api-gateway";
 import {
   GetSecretValueCommand,
+  GetSecretValueCommandOutput,
   SecretsManagerClient,
 } from "@aws-sdk/client-secrets-manager";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
@@ -19,19 +20,21 @@ import {
 
 import { v4 as uuid } from "uuid";
 
-import {
-  webHookEventValidator,
-  ChargeCompletedData,
-} from "../types/webHookEventTypes";
+import { ApiKeyInfo } from "../types/apiKeyInfo";
+import { CardTokenInfo } from "../types/cardTokenInfo";
+import { ChargeCompletedData } from "../types/webHookEventTypes";
 import { ChargeVerificationStatus } from "../types/chargeVerificationStatus";
 
+import { PROJECT_STATUS } from "../helpers/constants";
 import { getOneMonthFromNow } from "../helpers/fns/oneMonthFromNow";
+import { webHookEventValidator } from "../helpers/schemaValidator/webhookEventValidator";
 
 const region = process.env.REGION;
 const tableName = process.env.TABLE_NAME;
 const paymentGatewayUrl = process.env.PAYMENT_GATEWAY_URL!;
 const paymentGatewaySecretName = process.env.PAYMENT_SECRET_NAME!;
-const webhookEventVerifierSecretName = process.env.WEBHOOK_SECRET_NAME!;
+const paymentGatewayWebhookVerifierSecretName =
+  process.env.WEBHOOK_SECRET_NAME!;
 
 const client = new DynamoDBClient({ region });
 
@@ -44,6 +47,11 @@ const apiGatewayClient = new APIGatewayClient({
 const secretClient = new SecretsManagerClient({
   region,
 });
+
+let paymentGatewaySecret: GetSecretValueCommandOutput | undefined;
+let paymentGatewayWebhookVerifierSecret:
+  | GetSecretValueCommandOutput
+  | undefined;
 
 export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
   if (!event.body) {
@@ -60,21 +68,26 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
   console.log(body);
 
   try {
-    const [paymentGatewaySecret, webhookEventVerifierSecret] =
-      await Promise.all([
-        secretClient.send(
-          new GetSecretValueCommand({ SecretId: paymentGatewaySecretName })
-        ),
-        secretClient.send(
-          new GetSecretValueCommand({
-            SecretId: webhookEventVerifierSecretName,
-          })
-        ),
-      ]);
+    //gets the payment gateway secret key & the verif hash that is sent by the payment gateway
+    if (!paymentGatewaySecret || !paymentGatewayWebhookVerifierSecret) {
+      console.log("cold start, so fetching secrets");
+
+      [paymentGatewaySecret, paymentGatewayWebhookVerifierSecret] =
+        await Promise.all([
+          secretClient.send(
+            new GetSecretValueCommand({ SecretId: paymentGatewaySecretName })
+          ),
+          secretClient.send(
+            new GetSecretValueCommand({
+              SecretId: paymentGatewayWebhookVerifierSecretName,
+            })
+          ),
+        ]);
+    }
 
     if (
       !paymentGatewaySecret.SecretString ||
-      !webhookEventVerifierSecret.SecretString
+      !paymentGatewayWebhookVerifierSecret.SecretString
     ) {
       console.error("Payment or Webhook secret is empty");
 
@@ -82,7 +95,8 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     }
 
     if (
-      webhookEventVerifierSecret.SecretString !== event.headers["verif-hash"]
+      paymentGatewayWebhookVerifierSecret.SecretString !==
+      event.headers["verif-hash"]
     ) {
       console.error("Signature does not match");
 
@@ -135,7 +149,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
       const chargeVerificationRes =
         (await chargeVerificationReq.json()) as ChargeVerificationStatus;
 
-      if (chargeVerificationRes.data.status !== "successful") {
+      if (chargeVerificationRes.data.status.toLowerCase() !== "successful") {
         console.error("Payment not successful");
 
         return {
@@ -151,13 +165,14 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
         new GetCommand({
           TableName: tableName,
           Key: {
-            id: webHookEvent.meta_data.projectId,
+            projectId: webHookEvent.meta_data.projectId,
             userId: webHookEvent.meta_data.userId,
           },
           ProjectionExpression: "apiKeyInfo, userId, createdAt",
         })
       );
 
+      //if the project does not exist, then its a new project
       if (!existingProject.Item) {
         const apiKey = await apiGatewayClient.send(
           new CreateApiKeyCommand({
@@ -186,13 +201,23 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
           })
         );
 
+        const apiKeyInfo: ApiKeyInfo = {
+          apiKeyId: apiKey.id,
+          usagePlanId: webHookEvent.meta_data.usagePlanId,
+        };
+
+        const cardTokenInfo: CardTokenInfo = {
+          token: chargeVerificationRes.data.card.token,
+          expiry: chargeVerificationRes.data.card.expiry,
+        };
+
         await dynamo.send(
           new PutCommand({
             TableName: tableName,
             Item: {
-              sub_status: "active",
+              sub_status: PROJECT_STATUS.Active as PROJECT_STATUS,
               email: eventData.customer.email,
-              id: webHookEvent.meta_data.projectId,
+              projectId: webHookEvent.meta_data.projectId,
               userId: webHookEvent.meta_data.userId,
               projectName: webHookEvent.meta_data.projectName,
               nextPaymentDate: getOneMonthFromNow(), //TODO: CHANGE TO ONE MONTH FROM NOW
@@ -200,14 +225,8 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
               createdAt: new Date(eventData.created_at).getTime(),
               currentPlan: webHookEvent.meta_data.planName,
               apiKey: apiKey.value,
-              apiKeyInfo: {
-                apiKeyId: apiKey.id,
-                usagePlanId: webHookEvent.meta_data.usagePlanId,
-              },
-              cardTokenInfo: {
-                token: chargeVerificationRes.data.card.token,
-                expiry: chargeVerificationRes.data.card.expiry,
-              },
+              apiKeyInfo,
+              cardTokenInfo,
             },
           })
         );
@@ -247,7 +266,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
         new UpdateCommand({
           TableName: tableName,
           Key: {
-            id: webHookEvent.meta_data.projectId,
+            projectId: webHookEvent.meta_data.projectId,
             userId: webHookEvent.meta_data.userId,
           },
           UpdateExpression:
@@ -269,7 +288,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
       body: JSON.stringify({ message: "Api key generated" }),
     };
   } catch (error: unknown) {
-    console.error(error);
+    console.error("ERROR HANDLING WEBHOOK", error);
 
     //let it be caught by the alarm
     throw error;

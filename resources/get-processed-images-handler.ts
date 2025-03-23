@@ -5,7 +5,9 @@ import { DynamoDBDocumentClient, GetCommand } from "@aws-sdk/lib-dynamodb";
 import { z } from "zod";
 
 import { processedImagesRouteVar } from "../helpers/constants";
-import { projectIdValidator } from "../helpers/schemaValidator/validators";
+import { projectIdValidator } from "../helpers/schemaValidator/projectIdValidator";
+
+import { ProcessedImagesInfo } from "../types/processedResultInfo";
 
 const region = process.env.REGION!;
 const processedResultsTable = process.env.PROCESSED_IMAGES_TABLE_NAME!;
@@ -31,7 +33,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     .safeParse(pathParameters);
 
   if (!success) {
-    return { statusCode: 400, body: "Invalid imageId or projectId" };
+    return { statusCode: 400, body: "Invalid url" };
   }
 
   const { imageId, projectId } = data;
@@ -60,9 +62,14 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
       };
     }
 
+    const processedResult = results.Item as Pick<
+      ProcessedImagesInfo,
+      "createdAt" | "originalImageUrl" | "results"
+    >;
+
     return {
       statusCode: 200,
-      body: JSON.stringify(results.Item),
+      body: JSON.stringify(processedResult),
     };
   } catch (error: unknown) {
     console.error("Failed to get processed images", error);

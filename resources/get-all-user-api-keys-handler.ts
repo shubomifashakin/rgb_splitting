@@ -41,7 +41,8 @@ export const handler = async (event: CustomAPIGatewayEventV2) => {
         },
         Limit: 10,
         ScanIndexForward: false,
-        ProjectionExpression: "createdAt, apiKey, id, projectName, currentPlan",
+        ProjectionExpression:
+          "createdAt, apiKey, projectId, projectName, currentPlan",
       })
     );
 

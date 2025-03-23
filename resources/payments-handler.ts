@@ -3,7 +3,7 @@ import { APIGatewayProxyEventV2, Handler } from "aws-lambda";
 import { v4 as uuid } from "uuid";
 
 import { validatePlan } from "../helpers/fns/validatePlan";
-import { newPaymentRequestBodyValidator } from "../helpers/schemaValidator/validators";
+import { newPaymentRequestBodyValidator } from "../helpers/schemaValidator/newPaymentRequestBodyValidator";
 
 const region = process.env.REGION!;
 const paymentGatewayUrl = process.env.PAYMENT_GATEWAY_URL!;
@@ -36,14 +36,16 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
 
   console.log(data);
 
+  const { planName, email, userId, fullName, projectId, projectName } = data;
+
   try {
     const { planDetails, chosenUsagePlan, paymentGatewaySecret } =
       await validatePlan({
-        paymentGatewaySecretName,
-        usagePlanSecretName,
-        planName: data.planName,
         region,
+        planName,
         paymentGatewayUrl,
+        usagePlanSecretName,
+        paymentGatewaySecretName,
       });
 
     const paymentParams = {
@@ -53,18 +55,18 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
       currency: planDetails.currency,
       redirect_url: "http://localhost:3000/dashboard/new",
       customer: {
-        email: data.email,
-        name: data?.fullName ? data.fullName : "",
+        email,
+        name: fullName ? fullName : "",
       },
       customizations: {
         title: "Rgbreak",
       },
       meta: {
-        projectId: data.projectId ? data.projectId : uuid(),
-        userId: data.userId,
-        planName: data.planName,
+        userId,
+        planName,
+        projectName,
         usagePlanId: chosenUsagePlan,
-        projectName: data.projectName,
+        projectId: projectId ? projectId : uuid(),
       },
       payment_options: "card",
     };
@@ -97,7 +99,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     };
   } catch (error: unknown) {
     console.error(
-      `ERROR INITIALIZING PAYMENT FOR USER ${data.userId} ${data.email}`,
+      `ERROR INITIALIZING PAYMENT FOR USER ${userId} ${email}`,
       error
     );
 

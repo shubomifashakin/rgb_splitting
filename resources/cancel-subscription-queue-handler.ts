@@ -1,27 +1,28 @@
 import { SQSBatchItemFailure, SQSBatchResponse, SQSEvent } from "aws-lambda";
 import {
   GetSecretValueCommand,
+  GetSecretValueCommandOutput,
   SecretsManagerClient,
 } from "@aws-sdk/client-secrets-manager";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import {
   APIGatewayClient,
+  NotFoundException,
   CreateUsagePlanKeyCommand,
   DeleteUsagePlanKeyCommand,
   GetUsagePlanKeyCommand,
-  NotFoundException,
 } from "@aws-sdk/client-api-gateway";
 
 import {
-  DynamoDBDocumentClient,
   GetCommand,
   UpdateCommand,
+  DynamoDBDocumentClient,
 } from "@aws-sdk/lib-dynamodb";
 
 import { ExpiredProject } from "../types/expiredSubscriptionProjectInfo";
 
-import { usagePlanValidator } from "../helpers/schemaValidator/usagePlanValidator";
 import { PlanType } from "../helpers/constants";
+import { usagePlanValidator } from "../helpers/schemaValidator/usagePlanValidator";
 
 const region = process.env.REGION!;
 const tableName = process.env.TABLE_NAME!;
@@ -38,6 +39,8 @@ const secretClient = new SecretsManagerClient({
   region,
 });
 
+let allUsagePlanIds: GetSecretValueCommandOutput | undefined;
+
 //if a message fails to process, mark is as failed
 export const handler = async (event: SQSEvent): Promise<SQSBatchResponse> => {
   const cancelledProjects = event.Records;
@@ -50,7 +53,7 @@ export const handler = async (event: SQSEvent): Promise<SQSBatchResponse> => {
         const projectInfo = JSON.parse(project.body) as ExpiredProject;
 
         console.log("Processing project", {
-          projectId: projectInfo.id,
+          projectId: projectInfo.projectId,
           userId: projectInfo.userId,
         });
 
@@ -58,21 +61,26 @@ export const handler = async (event: SQSEvent): Promise<SQSBatchResponse> => {
         const existingProject = await dynamo.send(
           new GetCommand({
             TableName: tableName,
-            Key: { id: projectInfo.id, userId: projectInfo.userId },
+            Key: {
+              projectId: projectInfo.projectId,
+              userId: projectInfo.userId,
+            },
             ProjectionExpression: "apiKeyInfo",
           })
         );
 
         if (!existingProject.Item) {
           throw new Error(
-            `Project not found for ${projectInfo.email}, projectId ${projectInfo.id}`
+            `Project not found for ${projectInfo.email}, projectId ${projectInfo.projectId}`
           );
         }
 
-        //get all the available usagePlanIds
-        const allUsagePlanIds = await secretClient.send(
-          new GetSecretValueCommand({ SecretId: usagePlanSecretName })
-        );
+        //get all the available usagePlanIds, if not already available
+        if (!allUsagePlanIds) {
+          allUsagePlanIds = await secretClient.send(
+            new GetSecretValueCommand({ SecretId: usagePlanSecretName })
+          );
+        }
 
         if (!allUsagePlanIds.SecretString) {
           console.error("Available usage plans secret not found, is empty");
@@ -164,7 +172,10 @@ export const handler = async (event: SQSEvent): Promise<SQSBatchResponse> => {
         await dynamo.send(
           new UpdateCommand({
             TableName: tableName,
-            Key: { id: projectInfo.id, userId: projectInfo.userId },
+            Key: {
+              userId: projectInfo.userId,
+              projectId: projectInfo.projectId,
+            },
             UpdateExpression:
               "set apiKeyInfo.usagePlanId = :usagePlanId, currentPlan = :planName",
             ExpressionAttributeValues: {

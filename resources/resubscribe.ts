@@ -3,8 +3,8 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
 
-import { PlanType } from "../helpers/constants";
 import { validatePlan } from "../helpers/fns/validatePlan";
+import { PlanType, PROJECT_STATUS } from "../helpers/constants";
 
 import { ExpiredProject } from "../types/expiredSubscriptionProjectInfo";
 
@@ -51,13 +51,13 @@ export const handler: Handler = async (event: SQSEvent | null) => {
         KeyConditionExpression:
           "sub_status = :status AND nextPaymentDate <= :currentDate",
         ExpressionAttributeValues: {
-          ":status": "active",
           ":currentDate": Date.now(),
+          ":status": PROJECT_STATUS.Active,
           ":excludedPlan": PlanType.Free,
         },
         FilterExpression: "currentPlan <> :excludedPlan",
         ProjectionExpression:
-          "id, email, userId, projectName, nextPaymentDate, currentPlan, cardTokenInfo",
+          "projectId, email, userId, projectName, nextPaymentDate, currentPlan, cardTokenInfo, apiKeyInfo",
         Limit: batchLimit,
         ExclusiveStartKey: cursor,
       })
@@ -99,19 +99,19 @@ export const handler: Handler = async (event: SQSEvent | null) => {
               {
                 method: "POST",
                 body: JSON.stringify({
-                  token: project.cardTokenInfo.token,
                   email: project.email,
                   currency: planDetails.currency,
+                  token: project.cardTokenInfo.token,
                   countryCode: "NG",
                   amount: planDetails.amount,
-                  tx_ref: `${project.id}-${project.nextPaymentDate}`,
+                  tx_ref: `${project.projectId}-${project.nextPaymentDate}`,
                   narration: `Renewal Charge for project: ${project.projectName}`,
                   meta: {
-                    projectId: project.id,
                     userId: project.userId,
+                    projectId: project.projectId,
                     usagePlanId: chosenUsagePlan,
-                    projectName: project.projectName.toLowerCase().trim(),
                     planName: planDetails.name.toLowerCase().trim(),
+                    projectName: project.projectName.toLowerCase().trim(),
                   },
                 }),
                 headers: {

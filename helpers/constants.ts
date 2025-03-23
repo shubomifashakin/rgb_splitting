@@ -6,6 +6,11 @@ export enum PlanType {
   Executive = "executive",
 }
 
+export enum PROJECT_STATUS {
+  Active = "active",
+  Inactive = "inactive",
+}
+
 export const maxProcessesInArray = 3;
 export const processedImagesRouteVar = "image";
 
