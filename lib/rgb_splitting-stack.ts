@@ -56,7 +56,7 @@ export class RgbSplittingStack extends cdk.Stack {
       this,
       `${props.variables.projectPrefix}-bucket-sh`,
       {
-        versioned: true,
+        versioned: false,
         publicReadAccess: true,
         bucketName: `${props.variables.projectPrefix}-bucket-sh`.toLowerCase(),
         removalPolicy:
