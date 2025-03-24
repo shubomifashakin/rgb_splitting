@@ -58,8 +58,11 @@ export class RgbSplittingStack extends cdk.Stack {
       {
         versioned: true,
         publicReadAccess: true,
-        bucketName: "rgb-split-bucket-sh",
-        removalPolicy: cdk.RemovalPolicy.DESTROY,
+        bucketName: `${props.variables.projectPrefix}-bucket-sh`.toLowerCase(),
+        removalPolicy:
+          props.variables.stage === "dev"
+            ? cdk.RemovalPolicy.DESTROY
+            : cdk.RemovalPolicy.RETAIN,
         blockPublicAccess: BlockPublicAccess.BLOCK_ACLS,
         cors: [
           {
@@ -92,7 +95,10 @@ export class RgbSplittingStack extends cdk.Stack {
         pointInTimeRecoverySpecification: {
           pointInTimeRecoveryEnabled: true,
         },
-        removalPolicy: cdk.RemovalPolicy.DESTROY,
+        removalPolicy:
+          props.variables.stage === "dev"
+            ? cdk.RemovalPolicy.DESTROY
+            : cdk.RemovalPolicy.RETAIN,
       }
     );
 
@@ -141,7 +147,10 @@ export class RgbSplittingStack extends cdk.Stack {
         pointInTimeRecoverySpecification: {
           pointInTimeRecoveryEnabled: true,
         },
-        removalPolicy: cdk.RemovalPolicy.DESTROY,
+        removalPolicy:
+          props.variables.stage === "dev"
+            ? cdk.RemovalPolicy.DESTROY
+            : cdk.RemovalPolicy.RETAIN,
       }
     );
 

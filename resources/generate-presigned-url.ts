@@ -125,7 +125,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
       headers,
       statusCode: 400,
       body: JSON.stringify({
-        message: "Free Plan does not support multiple channels",
+        message: "Free Plan does not support multiple channels or grains.",
       }),
     };
   }

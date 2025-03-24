@@ -40,7 +40,7 @@ export const handler: Handler = async (event: SQSEvent | null) => {
 
   console.log("STARTING CURSOR", cursor);
 
-  const batchLimit = 5000; //TODO: CHANGE TO 5000
+  const batchLimit = 2500; //TODO: CHANGE TO 2500
 
   try {
     //get all the projects with pro or exec subscriptions that are active & the nextPaymentDate is less than  or equal to the current date
@@ -84,6 +84,9 @@ export const handler: Handler = async (event: SQSEvent | null) => {
         let attempts = 0;
 
         while (attempts < 2) {
+          //delay the execution by 1 second
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+
           try {
             const { planDetails, chosenUsagePlan, paymentGatewaySecret } =
               await validatePlan({
