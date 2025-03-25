@@ -33,7 +33,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     .safeParse(pathParameters);
 
   if (!success) {
-    return { statusCode: 400, body: "Invalid url" };
+    return { statusCode: 400, body: "Bad Request - Invalid image key" };
   }
 
   const { imageId, projectId } = data;

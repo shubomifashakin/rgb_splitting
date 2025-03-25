@@ -3,6 +3,7 @@ import { APIGatewayProxyEventV2, Handler } from "aws-lambda";
 import { v4 as uuid } from "uuid";
 
 import { validatePlan } from "../helpers/fns/validatePlan";
+import { transformZodError } from "../helpers/fns/transformZodError";
 import { newPaymentRequestBodyValidator } from "../helpers/schemaValidator/newPaymentRequestBodyValidator";
 
 const region = process.env.REGION!;
@@ -31,7 +32,11 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     newPaymentRequestBodyValidator.safeParse(body);
 
   if (!success) {
-    return { statusCode: 400, body: JSON.stringify(error.issues), headers };
+    return {
+      headers,
+      statusCode: 400,
+      body: transformZodError(error),
+    };
   }
 
   console.log(data);

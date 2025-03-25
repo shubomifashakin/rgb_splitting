@@ -9,6 +9,13 @@ function isChannels(value: unknown): value is NormalizedChannels {
   return channels.includes(value as NormalizedChannels);
 }
 
+const invalidNormalizedChannelMessage = "Invalid normalized channel";
+
 export const normalizedChannelValidator = z
-  .array(z.string().refine(isChannels))
-  .max(maxProcessesInArray);
+  .array(
+    z.string().refine(isChannels, { message: invalidNormalizedChannelMessage }),
+    {
+      message: invalidNormalizedChannelMessage,
+    }
+  )
+  .max(maxProcessesInArray, { message: "Too many channels provided." });

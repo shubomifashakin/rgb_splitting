@@ -12,6 +12,7 @@ import {
   defaultNormalizedChannel,
   processedImagesRouteVar,
 } from "../helpers/constants";
+import { transformZodError } from "../helpers/fns/transformZodError";
 import { processValidator } from "../helpers/schemaValidator/processValidator";
 
 import { ProjectInfo } from "../types/projectInfo";
@@ -62,11 +63,9 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
 
   if (!success) {
     return {
-      statusCode: 400,
-      body: JSON.stringify({
-        message: error.issues,
-      }),
       headers,
+      statusCode: 400,
+      body: transformZodError(error),
     };
   }
 

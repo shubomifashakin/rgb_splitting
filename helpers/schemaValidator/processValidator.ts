@@ -24,19 +24,24 @@ const grainValueValidator = z.number().transform((val) => Math.min(255, val));
 //if the user specified just a string and not an array, use that channel value for all the grains
 //if they specified an array, then just use that array
 export const channelsValidator = z
-  .union([
-    channelValueValidator,
+  .union(
+    [
+      channelValueValidator,
 
-    //it must be a non emoty array
-    z
-      .array(channelValueValidator)
-      .min(1, {
-        message: "At least one channel must be provided.",
-      })
-      .max(maxProcessesInArray, {
-        message: "Too many channels provided",
-      }),
-  ]) //normalize the value of channels
+      //it must be a non emoty array
+      z
+        .array(channelValueValidator)
+        .min(1, {
+          message: "At least one channel must be provided.",
+        })
+        .max(maxProcessesInArray, {
+          message: "Too many channels provided",
+        }),
+    ],
+    {
+      message: "Invalid channel value. Expects a string or an array of strings",
+    }
+  ) //normalize the value of channels
   .transform(normalizeChannel)
   .optional()
   .default(defaultChannel);
@@ -46,18 +51,21 @@ export const channelsValidator = z
 //if the user specified just a number and not an array, use that grain value for all the channels
 //if they specified an array, then just use that array
 export const grainValidator = z
-  .union([
-    grainValueValidator,
+  .union(
+    [
+      grainValueValidator,
 
-    z
-      .array(grainValueValidator)
-      .min(1, {
-        message: "At least one grain must be provided.",
-      })
-      .max(maxProcessesInArray, {
-        message: "Too many grains provided",
-      }),
-  ])
+      z
+        .array(grainValueValidator)
+        .min(1, {
+          message: "At least one grain must be provided.",
+        })
+        .max(maxProcessesInArray, {
+          message: "Too many grains provided",
+        }),
+    ],
+    { message: "Invalid grain value. Expects a number or an array of numbers" }
+  )
   .transform((val) => (Array.isArray(val) ? val : [val, val, val]))
   .optional()
   .default(defaultGrain);
