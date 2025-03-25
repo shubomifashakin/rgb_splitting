@@ -26,7 +26,7 @@ import { ChargeCompletedData } from "../types/webHookEventTypes";
 import { ChargeVerificationStatus } from "../types/chargeVerificationStatus";
 
 import { PROJECT_STATUS } from "../helpers/constants";
-import { getOneMonthFromNow } from "../helpers/fns/oneMonthFromNow";
+import { getOneMonthFromDate } from "../helpers/fns/oneMonthFromDate";
 import { webHookEventValidator } from "../helpers/schemaValidator/webhookEventValidator";
 
 const region = process.env.REGION;
@@ -220,7 +220,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
               projectId: webHookEvent.meta_data.projectId,
               userId: webHookEvent.meta_data.userId,
               projectName: webHookEvent.meta_data.projectName,
-              nextPaymentDate: getOneMonthFromNow(), //TODO: CHANGE TO ONE MONTH FROM NOW
+              nextPaymentDate: getOneMonthFromDate(eventData.created_at), //TODO: CHANGE TO ONE MONTH FROM NOW
               currentBillingDate: new Date(eventData.created_at).getTime(),
               createdAt: new Date(eventData.created_at).getTime(),
               currentPlan: webHookEvent.meta_data.planName,
@@ -272,7 +272,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
           UpdateExpression:
             "set nextPaymentDate = :currentTimestamp, currentBillingDate = :currentBillingDate, apiKeyInfo.usagePlanId = :usagePlanId, currentPlan = :planName",
           ExpressionAttributeValues: {
-            ":currentTimestamp": getOneMonthFromNow(), //TODO: CHANGE TO ONE MONTH FROM NOW
+            ":currentTimestamp": getOneMonthFromDate(eventData.created_at), //TODO: CHANGE TO ONE MONTH FROM NOW
             ":currentBillingDate": new Date(eventData.created_at).getTime(),
             ":usagePlanId": webHookEvent.meta_data.usagePlanId,
             ":planName": webHookEvent.meta_data.planName,
