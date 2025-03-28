@@ -1,6 +1,5 @@
 import {
   APIGatewayClient,
-  CreateApiKeyCommand,
   CreateUsagePlanKeyCommand,
   DeleteUsagePlanKeyCommand,
 } from "@aws-sdk/client-api-gateway";
@@ -13,24 +12,20 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { APIGatewayProxyEventV2, Handler } from "aws-lambda";
 import {
   DynamoDBDocumentClient,
-  PutCommand,
   UpdateCommand,
   GetCommand,
 } from "@aws-sdk/lib-dynamodb";
 
-import { v4 as uuid } from "uuid";
-
-import { ApiKeyInfo } from "../types/apiKeyInfo";
-import { CardTokenInfo } from "../types/cardTokenInfo";
 import { ChargeCompletedData } from "../types/webHookEventTypes";
 import { ChargeVerificationStatus } from "../types/chargeVerificationStatus";
 
-import { PROJECT_STATUS } from "../helpers/constants";
+import { PlanType, PROJECT_STATUS } from "../helpers/constants";
 import { getOneMonthFromDate } from "../helpers/fns/oneMonthFromDate";
 import { webHookEventValidator } from "../helpers/schemaValidator/webhookEventValidator";
+import { CreateApiKeyAndAttachToUsagePlan } from "../helpers/fns/createApiKey";
 
-const region = process.env.REGION;
-const tableName = process.env.TABLE_NAME;
+const region = process.env.REGION!;
+const tableName = process.env.TABLE_NAME!;
 const paymentGatewayUrl = process.env.PAYMENT_GATEWAY_URL!;
 const paymentGatewaySecretName = process.env.PAYMENT_SECRET_NAME!;
 const paymentGatewayWebhookVerifierSecretName =
@@ -120,6 +115,8 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
       throw new Error("WEBHOOK EVENT SCHEMA VALIDATION FAILED");
     }
 
+    console.log("verified webhook event data successfully");
+
     if (
       webHookEvent.event === "charge.completed" &&
       webHookEvent.data.status === "successful"
@@ -174,67 +171,22 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
 
       //if the project does not exist, then its a new project
       if (!existingProject.Item) {
-        const apiKey = await apiGatewayClient.send(
-          new CreateApiKeyCommand({
-            value: uuid(),
-            name: `${webHookEvent.meta_data.projectName.replace(" ", "_")}_${
-              webHookEvent.meta_data.userId
-            }`,
-            enabled: true,
-          })
-        );
-
-        if (!apiKey.id || !apiKey.value) {
-          console.error(
-            `Failed to create api key for project ${webHookEvent.meta_data.projectName} by user ${webHookEvent.meta_data.userId}`
-          );
-
-          throw new Error("Internal server error - failed to create api key");
-        }
-
-        //add the apikey generated to the usage plan
-        await apiGatewayClient.send(
-          new CreateUsagePlanKeyCommand({
-            usagePlanId: webHookEvent.meta_data.usagePlanId,
-            keyId: apiKey.id,
-            keyType: "API_KEY",
-          })
-        );
-
-        const apiKeyInfo: ApiKeyInfo = {
-          apiKeyId: apiKey.id,
+        const res = await CreateApiKeyAndAttachToUsagePlan({
+          email: eventData.customer.email,
+          userId: webHookEvent.meta_data.userId,
+          tableName,
+          projectId: webHookEvent.meta_data.projectId,
+          createdAt: eventData.created_at,
+          projectName: webHookEvent.meta_data.projectName,
+          currentPlan: webHookEvent.meta_data.planName as PlanType,
           usagePlanId: webHookEvent.meta_data.usagePlanId,
-        };
+          cardExpiry: chargeVerificationRes.data.card.expiry,
+          cardToken: chargeVerificationRes.data.card.token,
+          apiGatewayClient,
+          dynamoClient: dynamo,
+        });
 
-        const cardTokenInfo: CardTokenInfo = {
-          token: chargeVerificationRes.data.card.token,
-          expiry: chargeVerificationRes.data.card.expiry,
-        };
-
-        await dynamo.send(
-          new PutCommand({
-            TableName: tableName,
-            Item: {
-              sub_status: PROJECT_STATUS.Active as PROJECT_STATUS,
-              email: eventData.customer.email,
-              projectId: webHookEvent.meta_data.projectId,
-              userId: webHookEvent.meta_data.userId,
-              projectName: webHookEvent.meta_data.projectName,
-              nextPaymentDate: getOneMonthFromDate(eventData.created_at), //TODO: CHANGE TO ONE MONTH FROM NOW
-              currentBillingDate: new Date(eventData.created_at).getTime(),
-              createdAt: new Date(eventData.created_at).getTime(),
-              currentPlan: webHookEvent.meta_data.planName,
-              apiKey: apiKey.value,
-              apiKeyInfo,
-              cardTokenInfo,
-            },
-          })
-        );
-
-        return {
-          statusCode: 200,
-          body: JSON.stringify({ message: "Api key generated" }),
-        };
+        return res;
       }
 
       //if there is an existing project, update the next payment date
@@ -270,12 +222,15 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
             userId: webHookEvent.meta_data.userId,
           },
           UpdateExpression:
-            "set nextPaymentDate = :currentTimestamp, currentBillingDate = :currentBillingDate, apiKeyInfo.usagePlanId = :usagePlanId, currentPlan = :planName",
+            "set nextPaymentDate = :currentTimestamp, currentBillingDate = :currentBillingDate, apiKeyInfo.usagePlanId = :usagePlanId, currentPlan = :planName, cardTokenInfo.token = :cardToken, cardTokenInfo.expiry = :cardExpiry, sub_status = :sub_status",
           ExpressionAttributeValues: {
             ":currentTimestamp": getOneMonthFromDate(eventData.created_at), //TODO: CHANGE TO ONE MONTH FROM NOW
             ":currentBillingDate": new Date(eventData.created_at).getTime(),
             ":usagePlanId": webHookEvent.meta_data.usagePlanId,
             ":planName": webHookEvent.meta_data.planName,
+            ":cardToken": chargeVerificationRes.data.card.token, //if the user was on free plan b4, they would have an emoty cardToken info so update it
+            ":cardExpiry": chargeVerificationRes.data.card.expiry,
+            ":sub_status": PROJECT_STATUS.Active, //if they cancelled their account b4, activate it
           },
         })
       );

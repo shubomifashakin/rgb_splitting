@@ -121,6 +121,10 @@ export class RgbSplittingStack extends cdk.Stack {
         name: "userId",
         type: AttributeType.STRING,
       },
+      sortKey: {
+        name: "createdAt",
+        type: AttributeType.NUMBER,
+      },
     });
 
     projectsTable.addGlobalSecondaryIndex({
@@ -316,6 +320,7 @@ export class RgbSplittingStack extends cdk.Stack {
           PAYMENT_SECRET_NAME: props.variables.paymentSecretName,
           AVAILABLE_PLANS_SECRET_NAME: availablePlansSecretName,
           PAYMENT_GATEWAY_URL: props.variables.paymentGatewayUrl,
+          TABLE_NAME: projectsTable.tableName,
         },
         timeout: cdk.Duration.seconds(15),
       }
@@ -862,8 +867,17 @@ export class RgbSplittingStack extends cdk.Stack {
 
     triggerChargeLambda.addToRolePolicy(
       new PolicyStatement({
-        actions: ["secretsmanager:GetSecretValue"],
+        actions: [
+          "apigateway:POST",
+          "apigateway:PATCH",
+          "secretsmanager:GetSecretValue",
+        ],
         resources: [
+          `arn:aws:apigateway:${this.region}::/apikeys`,
+          `arn:aws:apigateway:${this.region}::/apikeys/*`,
+          `arn:aws:apigateway:${this.region}::/usageplans`,
+          `arn:aws:apigateway:${this.region}::/usageplans/*/keys`,
+          `arn:aws:apigateway:${this.region}::/usageplans/*/keys/*`,
           `arn:aws:secretsmanager:${this.region}:${this.account}:secret:${availablePlansSecretName}*`,
           `arn:aws:secretsmanager:${this.region}:${this.account}:secret:${props.variables.paymentSecretName}*`,
         ],
@@ -1008,6 +1022,7 @@ export class RgbSplittingStack extends cdk.Stack {
     projectsTable.grantReadData(generatePresignedUrlLambda);
 
     projectsTable.grantWriteData(splittingLambda);
+    projectsTable.grantWriteData(triggerChargeLambda);
 
     projectsTable.grantReadData(getUsersApiKeysLambda);
 

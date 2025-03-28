@@ -2,14 +2,28 @@ import { APIGatewayProxyEventV2, Handler } from "aws-lambda";
 
 import { v4 as uuid } from "uuid";
 
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { APIGatewayClient } from "@aws-sdk/client-api-gateway";
+import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
+
+import { PlanType } from "../helpers/constants";
 import { validatePlan } from "../helpers/fns/validatePlan";
 import { transformZodError } from "../helpers/fns/transformZodError";
 import { newPaymentRequestBodyValidator } from "../helpers/schemaValidator/newPaymentRequestBodyValidator";
+import { CreateApiKeyAndAttachToUsagePlan } from "../helpers/fns/createApiKey";
 
 const region = process.env.REGION!;
+const tableName = process.env.TABLE_NAME!;
 const paymentGatewayUrl = process.env.PAYMENT_GATEWAY_URL!;
 const paymentGatewaySecretName = process.env.PAYMENT_SECRET_NAME!;
 const usagePlanSecretName = process.env.AVAILABLE_PLANS_SECRET_NAME!;
+
+const apiGatewayClient = new APIGatewayClient({
+  region,
+});
+
+const dynamo = new DynamoDBClient({ region });
+const dynamoClient = DynamoDBDocumentClient.from(dynamo);
 
 export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
   const headers = {
@@ -32,6 +46,8 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     newPaymentRequestBodyValidator.safeParse(body);
 
   if (!success) {
+    console.error(error.message);
+
     return {
       headers,
       statusCode: 400,
@@ -52,6 +68,27 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
         usagePlanSecretName,
         paymentGatewaySecretName,
       });
+
+    //if the plan is free, no need for payments, create the api, attach to the free usage plan & shekinah
+    if (planName === PlanType.Free) {
+      //creates the api key, attaches it to the correct usage plan & stores in db
+      const res = await CreateApiKeyAndAttachToUsagePlan({
+        email,
+        userId,
+        tableName,
+        projectId: uuid(),
+        createdAt: new Date().toDateString(),
+        projectName,
+        currentPlan: planName,
+        usagePlanId: chosenUsagePlan,
+        cardExpiry: "",
+        cardToken: "",
+        apiGatewayClient,
+        dynamoClient,
+      });
+
+      return res;
+    }
 
     const paymentParams = {
       tx_ref: uuid(),
@@ -97,6 +134,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     const paymentResponse = await paymentReq.json();
 
     console.log("completed successfully");
+
     return {
       statusCode: 200,
       body: JSON.stringify(paymentResponse),
