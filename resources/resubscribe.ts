@@ -14,7 +14,8 @@ const paymentGatewayUrl = process.env.PAYMENT_GATEWAY_URL!;
 const paymentGatewaySecretName = process.env.PAYMENT_SECRET_NAME!;
 const usagePlanSecretName = process.env.AVAILABLE_PLANS_SECRET_NAME!;
 const resubscribeQueueUrl = process.env.RESUBSCRIBE_QUEUE_URL!;
-const cancelSubscriptionQueueUrl = process.env.CANCEL_SUBSCRIPTION_QUEUE_URL!;
+const downgradeSubscriptionQueueUrl =
+  process.env.DOWNGRADE_SUBSCRIPTION_QUEUE_URL!;
 
 const client = new DynamoDBClient({ region });
 
@@ -57,7 +58,7 @@ export const handler: Handler = async (event: SQSEvent | null) => {
         },
         FilterExpression: "currentPlan <> :excludedPlan",
         ProjectionExpression:
-          "projectId, email, userId, projectName, nextPaymentDate, currentPlan, cardTokenInfo, apiKeyInfo",
+          "projectId, email, userId, projectName, nextPaymentDate, currentPlan, cardTokenInfo",
         Limit: batchLimit,
         ExclusiveStartKey: cursor,
       })
@@ -104,7 +105,7 @@ export const handler: Handler = async (event: SQSEvent | null) => {
                 body: JSON.stringify({
                   email: project.email,
                   currency: planDetails.currency,
-                  token: project.cardTokenInfo.token,
+                  token: project.cardTokenInfo.cardToken,
                   countryCode: "NG",
                   amount: planDetails.amount,
                   tx_ref: `${project.projectId}-${project.nextPaymentDate}`,
@@ -136,7 +137,7 @@ export const handler: Handler = async (event: SQSEvent | null) => {
                 .send(
                   new SendMessageCommand({
                     MessageBody: JSON.stringify(project),
-                    QueueUrl: cancelSubscriptionQueueUrl,
+                    QueueUrl: downgradeSubscriptionQueueUrl,
                   })
                 )
                 .catch((error: unknown) => {
@@ -163,7 +164,7 @@ export const handler: Handler = async (event: SQSEvent | null) => {
                 .send(
                   new SendMessageCommand({
                     MessageBody: JSON.stringify(project),
-                    QueueUrl: cancelSubscriptionQueueUrl,
+                    QueueUrl: downgradeSubscriptionQueueUrl,
                   })
                 )
                 .catch((error: unknown) => {

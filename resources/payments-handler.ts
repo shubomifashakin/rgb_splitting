@@ -4,13 +4,19 @@ import { v4 as uuid } from "uuid";
 
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { APIGatewayClient } from "@aws-sdk/client-api-gateway";
-import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
+import {
+  DynamoDBDocumentClient,
+  GetCommand,
+  UpdateCommand,
+} from "@aws-sdk/lib-dynamodb";
 
-import { PlanType } from "../helpers/constants";
+import { ApiKeyInfo } from "../types/apiKeyInfo";
 import { validatePlan } from "../helpers/fns/validatePlan";
+import { PlanType, PROJECT_STATUS } from "../helpers/constants";
 import { transformZodError } from "../helpers/fns/transformZodError";
 import { newPaymentRequestBodyValidator } from "../helpers/schemaValidator/newPaymentRequestBodyValidator";
 import { CreateApiKeyAndAttachToUsagePlan } from "../helpers/fns/createApiKey";
+import { migrateExistingProjectApiKey } from "../helpers/fns/migrateExistingProjectApiKey";
 
 const region = process.env.REGION!;
 const tableName = process.env.TABLE_NAME!;
@@ -71,23 +77,98 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
 
     //if the plan is free, no need for payments, create the api, attach to the free usage plan & shekinah
     if (planName === PlanType.Free) {
-      //creates the api key, attaches it to the correct usage plan & stores in db
-      const res = await CreateApiKeyAndAttachToUsagePlan({
-        email,
-        userId,
-        tableName,
-        projectId: uuid(),
-        createdAt: new Date().toDateString(),
-        projectName,
-        currentPlan: planName,
-        usagePlanId: chosenUsagePlan,
-        cardExpiry: "",
-        cardToken: "",
+      if (!projectId) {
+        //creates the api key, attaches it to the correct usage plan & stores in db
+        const res = await CreateApiKeyAndAttachToUsagePlan({
+          email,
+          userId,
+          tableName,
+          projectId: uuid(),
+          createdAt: new Date().toDateString(),
+          projectName,
+          currentPlan: planName,
+          usagePlanId: chosenUsagePlan,
+          cardExpiry: "",
+          cardToken: "",
+          apiGatewayClient,
+          dynamoClient,
+        });
+
+        return res;
+      }
+
+      //check if the project exists
+      const existingProject = await dynamoClient.send(
+        new GetCommand({
+          TableName: tableName,
+          Key: {
+            projectId,
+            userId,
+          },
+          ProjectionExpression: "apiKeyInfo, sub_status",
+        })
+      );
+
+      if (!existingProject.Item) {
+        //creates the api key, attaches it to the correct usage plan & stores in db
+        const res = await CreateApiKeyAndAttachToUsagePlan({
+          email,
+          userId,
+          tableName,
+          projectId: uuid(),
+          createdAt: new Date().toDateString(),
+          projectName,
+          currentPlan: planName,
+          usagePlanId: chosenUsagePlan,
+          cardExpiry: "",
+          cardToken: "",
+          apiGatewayClient,
+          dynamoClient,
+        });
+
+        return res;
+      }
+
+      const projectInfo = existingProject.Item as {
+        apiKeyInfo: ApiKeyInfo;
+        sub_status: PROJECT_STATUS;
+      };
+
+      //migrate the api key to the new usage plan, if necessary
+      await migrateExistingProjectApiKey({
+        apiKeyInfo: projectInfo.apiKeyInfo,
+        projectStatus: projectInfo.sub_status,
+        newUsagePlanId: chosenUsagePlan,
         apiGatewayClient,
-        dynamoClient,
       });
 
-      return res;
+      await dynamoClient.send(
+        new UpdateCommand({
+          TableName: tableName,
+          Key: {
+            userId,
+            projectId,
+          },
+          ExpressionAttributeValues: {
+            ":currentPlan": planName,
+            ":usagePlanId": chosenUsagePlan,
+            ":sub_status": PROJECT_STATUS.Active,
+          },
+          UpdateExpression:
+            "set sub_status = :sub_status, currentPlan = :currentPlan, apiKeyInfo.usagePlanId = :usagePlanId",
+        })
+      );
+
+      return {
+        statusCode: 200,
+        body: JSON.stringify({ message: "Api key generated" }),
+        headers: {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "OPTIONS, POST, GET",
+          "Access-Control-Allow-Headers":
+            "Content-Type, Authorization, X-Api-Key",
+        },
+      };
     }
 
     const paymentParams = {

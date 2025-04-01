@@ -75,8 +75,8 @@ export async function CreateApiKeyAndAttachToUsagePlan({
   };
 
   let cardTokenInfo: CardTokenInfo = {
-    token: cardToken,
-    expiry: cardExpiry,
+    cardToken,
+    cardExpiry,
   };
 
   await dynamoClient.send(

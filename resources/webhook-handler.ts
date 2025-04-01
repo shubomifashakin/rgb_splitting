@@ -1,8 +1,4 @@
-import {
-  APIGatewayClient,
-  CreateUsagePlanKeyCommand,
-  DeleteUsagePlanKeyCommand,
-} from "@aws-sdk/client-api-gateway";
+import { APIGatewayClient } from "@aws-sdk/client-api-gateway";
 import {
   GetSecretValueCommand,
   GetSecretValueCommandOutput,
@@ -16,13 +12,15 @@ import {
   GetCommand,
 } from "@aws-sdk/lib-dynamodb";
 
+import { ApiKeyInfo } from "../types/apiKeyInfo";
 import { ChargeCompletedData } from "../types/webHookEventTypes";
 import { ChargeVerificationStatus } from "../types/chargeVerificationStatus";
 
 import { PlanType, PROJECT_STATUS } from "../helpers/constants";
 import { getOneMonthFromDate } from "../helpers/fns/oneMonthFromDate";
-import { webHookEventValidator } from "../helpers/schemaValidator/webhookEventValidator";
 import { CreateApiKeyAndAttachToUsagePlan } from "../helpers/fns/createApiKey";
+import { webHookEventValidator } from "../helpers/schemaValidator/webhookEventValidator";
+import { migrateExistingProjectApiKey } from "../helpers/fns/migrateExistingProjectApiKey";
 
 const region = process.env.REGION!;
 const tableName = process.env.TABLE_NAME!;
@@ -165,7 +163,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
             projectId: webHookEvent.meta_data.projectId,
             userId: webHookEvent.meta_data.userId,
           },
-          ProjectionExpression: "apiKeyInfo, userId, createdAt",
+          ProjectionExpression: "apiKeyInfo, sub_status",
         })
       );
 
@@ -189,30 +187,20 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
         return res;
       }
 
-      //if there is an existing project, update the next payment date
-      //if the plan has changed, update the usage plan
-      if (
-        existingProject.Item.apiKeyInfo.usagePlanId !==
-        webHookEvent.meta_data.usagePlanId
-      ) {
-        //CANT RUN IN PARALLEl BECAUSE AN APIKEY CAN ONLY BELONG TO 1 USAGE PLAN AT A TIME
-        //remove the user from the old usage plan
-        await apiGatewayClient.send(
-          new DeleteUsagePlanKeyCommand({
-            usagePlanId: existingProject.Item.apiKeyInfo.usagePlanId,
-            keyId: existingProject.Item.apiKeyInfo.apiKeyId,
-          })
-        );
+      const { apiKeyInfo, sub_status } = existingProject.Item as {
+        apiKeyInfo: ApiKeyInfo;
+        sub_status: PROJECT_STATUS;
+      };
 
-        //add their apikey to the new usage plan
-        await apiGatewayClient.send(
-          new CreateUsagePlanKeyCommand({
-            usagePlanId: webHookEvent.meta_data.usagePlanId,
-            keyId: existingProject.Item.apiKeyInfo.apiKeyId,
-            keyType: "API_KEY",
-          })
-        );
-      }
+      // EXISTING PROJECT
+
+      //if the plan has changed, update the usage plan
+      await migrateExistingProjectApiKey({
+        apiKeyInfo,
+        apiGatewayClient,
+        projectStatus: sub_status,
+        newUsagePlanId: webHookEvent.meta_data.usagePlanId,
+      });
 
       await dynamo.send(
         new UpdateCommand({
@@ -222,15 +210,15 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
             userId: webHookEvent.meta_data.userId,
           },
           UpdateExpression:
-            "set nextPaymentDate = :currentTimestamp, currentBillingDate = :currentBillingDate, apiKeyInfo.usagePlanId = :usagePlanId, currentPlan = :planName, cardTokenInfo.token = :cardToken, cardTokenInfo.expiry = :cardExpiry, sub_status = :sub_status",
+            "set nextPaymentDate = :currentTimestamp, currentBillingDate = :currentBillingDate, apiKeyInfo.usagePlanId = :usagePlanId, currentPlan = :planName, cardTokenInfo.cardToken = :cardToken, cardTokenInfo.cardExpiry = :cardExpiry, sub_status = :sub_status",
           ExpressionAttributeValues: {
-            ":currentTimestamp": getOneMonthFromDate(eventData.created_at), //TODO: CHANGE TO ONE MONTH FROM NOW
-            ":currentBillingDate": new Date(eventData.created_at).getTime(),
-            ":usagePlanId": webHookEvent.meta_data.usagePlanId,
+            ":sub_status": PROJECT_STATUS.Active, //if they cancelled their account b4, activate it
             ":planName": webHookEvent.meta_data.planName,
+            ":usagePlanId": webHookEvent.meta_data.usagePlanId, //update the usagePlanId to the one they paid for
             ":cardToken": chargeVerificationRes.data.card.token, //if the user was on free plan b4, they would have an emoty cardToken info so update it
             ":cardExpiry": chargeVerificationRes.data.card.expiry,
-            ":sub_status": PROJECT_STATUS.Active, //if they cancelled their account b4, activate it
+            ":currentTimestamp": getOneMonthFromDate(eventData.created_at), //TODO: CHANGE TO ONE MONTH FROM NOW
+            ":currentBillingDate": new Date(eventData.created_at).getTime(),
           },
         })
       );

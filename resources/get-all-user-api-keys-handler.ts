@@ -1,6 +1,6 @@
 import {
-  APIGatewayEventRequestContextV2,
   APIGatewayProxyEventV2,
+  APIGatewayEventRequestContextV2,
 } from "aws-lambda";
 
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
@@ -42,7 +42,7 @@ export const handler = async (event: CustomAPIGatewayEventV2) => {
         Limit: 10,
         ScanIndexForward: false,
         ProjectionExpression:
-          "createdAt, apiKey, projectId, projectName, currentPlan",
+          "createdAt, apiKey, projectId, projectName, currentPlan, sub_status",
       })
     );
 

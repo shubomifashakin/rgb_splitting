@@ -159,26 +159,26 @@ export class RgbSplittingStack extends cdk.Stack {
     );
 
     //this queue is used to store messages that failed to be downgraded
-    const cancelSubscriptionDeadLetterQueue = new Queue(
+    const downgradeSubscriptionDLQ = new Queue(
       this,
-      `${props.variables.projectPrefix}-cancel-subscription-dlq`,
+      `${props.variables.projectPrefix}-downgrade-subscription-dlq`,
       {
-        queueName: `${props.variables.projectPrefix}-cancel-subscription-dlq`,
+        queueName: `${props.variables.projectPrefix}-downgrade-subscription-dlq`,
         retentionPeriod: cdk.Duration.days(14),
       }
     );
 
     //resubscriptions that failed are sent to this queue so they can be downgraded to the free plan
-    const cancelSubscriptionQueue = new Queue(
+    const downgradeSubscriptionQueue = new Queue(
       this,
-      `${props.variables.projectPrefix}-cancel-subscription-queue`,
+      `${props.variables.projectPrefix}-downgrade-subscription-queue`,
       {
-        queueName: `${props.variables.projectPrefix}-cancel-subscription-queue`,
+        queueName: `${props.variables.projectPrefix}-downgrade-subscription-queue`,
         retentionPeriod: cdk.Duration.days(4),
         visibilityTimeout: cdk.Duration.minutes(1.2), //once the message is sent out, if the message is not processed before this timer ends, it would reappppear
         deadLetterQueue: {
           maxReceiveCount: 2,
-          queue: cancelSubscriptionDeadLetterQueue,
+          queue: downgradeSubscriptionDLQ,
         },
         deliveryDelay: cdk.Duration.seconds(20),
         receiveMessageWaitTime: cdk.Duration.seconds(20),
@@ -359,7 +359,7 @@ export class RgbSplittingStack extends cdk.Stack {
           PAYMENT_SECRET_NAME: props.variables.paymentSecretName,
           AVAILABLE_PLANS_SECRET_NAME: availablePlansSecretName,
           RESUBSCRIBE_QUEUE_URL: resubscribeSubscriptionQueue.queueUrl,
-          CANCEL_SUBSCRIPTION_QUEUE_URL: cancelSubscriptionQueue.queueUrl,
+          DOWNGRADE_SUBSCRIPTION_QUEUE_URL: downgradeSubscriptionQueue.queueUrl,
         },
         timeout: cdk.Duration.minutes(2),
         recursiveLoop: RecursiveLoop.ALLOW, // got an email from aws thar my function was terminated, so i added this, the resubscribe lambda uses a recursive design
@@ -367,15 +367,15 @@ export class RgbSplittingStack extends cdk.Stack {
       }
     );
 
-    const cancelSubscriptionLambda = new NodejsFunction(
+    const downgradeSubscriptionLambda = new NodejsFunction(
       this,
-      `${props.variables.projectPrefix}-cancel-subscription-queue-lambda`,
+      `${props.variables.projectPrefix}-downgrade-subscription-queue-lambda`,
       {
-        functionName: `${props.variables.projectPrefix}-cancel-subscription-queue-lambda`,
+        functionName: `${props.variables.projectPrefix}-downgrade-subscription-queue-lambda`,
         description:
-          "This lambda is used to cancel subscriptions that have failed to resubscribe. It receives messages from the sqs queue",
+          "This lambda is used to downgrade subscriptions that have failed to resubscribe. It receives messages from the sqs queue",
         runtime: Runtime.NODEJS_22_X,
-        entry: "./resources/cancel-subscription-queue-handler.ts",
+        entry: "./resources/downgrade-subscription-handler.ts",
         handler: "handler",
         environment: {
           REGION: this.region,
@@ -404,13 +404,32 @@ export class RgbSplittingStack extends cdk.Stack {
       }
     );
 
+    const cancelSubscriptionLambda = new NodejsFunction(
+      this,
+      `${props.variables.projectPrefix}-cancel-subscription-lambda`,
+      {
+        functionName: `${props.variables.projectPrefix}-cancel-subscription-lambda`,
+        description:
+          "This lambda is used to enable users cancel their subscription for a particular project",
+        runtime: Runtime.NODEJS_22_X,
+        entry: "./resources/cancel-subscription-handler.ts",
+        handler: "handler",
+        environment: {
+          REGION: this.region,
+          TABLE_NAME: projectsTable.tableName,
+          AVAILABLE_PLANS_SECRET_NAME: availablePlansSecretName,
+        },
+        timeout: cdk.Duration.seconds(10),
+      }
+    );
+
     //let the resubscribe lambda also receive events from the queue
     resubscribeLambda.addEventSource(
       new SqsEventSource(resubscribeSubscriptionQueue, { batchSize: 10 })
     );
 
-    cancelSubscriptionLambda.addEventSource(
-      new SqsEventSource(cancelSubscriptionQueue, {
+    downgradeSubscriptionLambda.addEventSource(
+      new SqsEventSource(downgradeSubscriptionQueue, {
         batchSize: 10,
         reportBatchItemFailures: true,
       })
@@ -612,17 +631,15 @@ export class RgbSplittingStack extends cdk.Stack {
       new cdk.aws_cloudwatch_actions.SnsAction(snsTopic)
     );
 
-    //this alarm is triggered if there are messages in the cancel subscription dead letter queue
-    const cancelSubscriptionDLQAlarm = new cdk.aws_cloudwatch.Alarm(
+    //this alarm is triggered if there are messages in the downgrade subscription dead letter queue
+    const downgradeSubscriptionDLQAlarm = new cdk.aws_cloudwatch.Alarm(
       this,
-      `${props.variables.projectPrefix}-cancel-subscription-dlq-alarm`,
+      `${props.variables.projectPrefix}-downgrade-subscription-dlq-alarm`,
       {
         metric:
-          cancelSubscriptionDeadLetterQueue.metricApproximateNumberOfMessagesVisible(
-            {
-              statistic: "sum",
-            }
-          ),
+          downgradeSubscriptionDLQ.metricApproximateNumberOfMessagesVisible({
+            statistic: "sum",
+          }),
         evaluationPeriods: 1,
         threshold: 2,
         comparisonOperator:
@@ -630,12 +647,12 @@ export class RgbSplittingStack extends cdk.Stack {
             .GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
         actionsEnabled: true,
         alarmName:
-          `${props.variables.projectPrefix}-cancel-subscription-dlq-alarm`.toUpperCase(),
+          `${props.variables.projectPrefix}-downgrade-subscription-dlq-alarm`.toUpperCase(),
         alarmDescription: "There are messages in the dead letter queue",
       }
     );
 
-    cancelSubscriptionDLQAlarm.addAlarmAction(
+    downgradeSubscriptionDLQAlarm.addAlarmAction(
       new cdk.aws_cloudwatch_actions.SnsAction(snsTopic)
     );
 
@@ -809,6 +826,9 @@ export class RgbSplittingStack extends cdk.Stack {
       .addResource(processedImagesRouteVar)
       .addResource("{imageId}");
 
+    //route to cancel subscriptions
+    const cancelSubscriptionRoute = v1Root.addResource("cancel-subscription");
+
     generatePresignedUrlRoute.addMethod(
       HttpMethod.POST,
       new LambdaIntegration(generatePresignedUrlLambda),
@@ -842,11 +862,21 @@ export class RgbSplittingStack extends cdk.Stack {
       { apiKeyRequired: true }
     );
 
+    cancelSubscriptionRoute.addMethod(
+      HttpMethod.POST,
+      new LambdaIntegration(cancelSubscriptionLambda),
+      {
+        authorizer: userAuthorizer,
+        authorizationType: AuthorizationType.CUSTOM,
+      }
+    );
+
     //grant the webhook Lambda permission to create new ApiKeys & fetch all our available keys
     //grant it permission to modify our usage plans
     webHookLambda.addToRolePolicy(
       new PolicyStatement({
         actions: [
+          "apigateway:GET",
           "apigateway:POST",
           "apigateway:PATCH",
           "apigateway:DELETE",
@@ -868,8 +898,10 @@ export class RgbSplittingStack extends cdk.Stack {
     triggerChargeLambda.addToRolePolicy(
       new PolicyStatement({
         actions: [
+          "apigateway:GET",
           "apigateway:POST",
           "apigateway:PATCH",
+          "apigateway:DELETE",
           "secretsmanager:GetSecretValue",
         ],
         resources: [
@@ -910,13 +942,13 @@ export class RgbSplittingStack extends cdk.Stack {
       })
     );
 
-    cancelSubscriptionLambda.addToRolePolicy(
+    downgradeSubscriptionLambda.addToRolePolicy(
       new PolicyStatement({
         actions: [
+          "apigateway:GET",
           "apigateway:POST",
           "apigateway:PATCH",
           "apigateway:DELETE",
-          "apigateway:GET",
           "secretsmanager:GetSecretValue",
         ],
         resources: [
@@ -926,6 +958,24 @@ export class RgbSplittingStack extends cdk.Stack {
           `arn:aws:apigateway:${this.region}::/usageplans/*/keys`,
           `arn:aws:apigateway:${this.region}::/usageplans/*/keys/*`,
           `arn:aws:secretsmanager:${this.region}:${this.account}:secret:${availablePlansSecretName}*`, // i did this to prevent circular dependency issue
+        ],
+      })
+    );
+
+    cancelSubscriptionLambda.addToRolePolicy(
+      new PolicyStatement({
+        actions: [
+          "apigateway:POST",
+          "apigateway:PATCH",
+          "apigateway:DELETE",
+          "apigateway:GET",
+        ],
+        resources: [
+          `arn:aws:apigateway:${this.region}::/apikeys`,
+          `arn:aws:apigateway:${this.region}::/apikeys/*`,
+          `arn:aws:apigateway:${this.region}::/usageplans`, //i did this to prevent circular dependency issues between lambda, the rest api & the usage plans
+          `arn:aws:apigateway:${this.region}::/usageplans/*/keys`,
+          `arn:aws:apigateway:${this.region}::/usageplans/*/keys/*`,
         ],
       })
     );
@@ -1000,8 +1050,10 @@ export class RgbSplittingStack extends cdk.Stack {
       }
     );
 
-    cancelSubscriptionQueue.grantSendMessages(resubscribeLambda);
-    cancelSubscriptionQueue.grantConsumeMessages(cancelSubscriptionLambda);
+    downgradeSubscriptionQueue.grantSendMessages(resubscribeLambda);
+    downgradeSubscriptionQueue.grantConsumeMessages(
+      downgradeSubscriptionLambda
+    );
 
     resubscribeSubscriptionQueue.grantSendMessages(resubscribeLambda);
     resubscribeSubscriptionQueue.grantConsumeMessages(resubscribeLambda);
@@ -1019,14 +1071,15 @@ export class RgbSplittingStack extends cdk.Stack {
 
     projectsTable.grantReadWriteData(webHookLambda);
     projectsTable.grantReadWriteData(resubscribeLambda);
+    projectsTable.grantReadWriteData(triggerChargeLambda);
     projectsTable.grantReadData(generatePresignedUrlLambda);
+    projectsTable.grantReadWriteData(cancelSubscriptionLambda);
 
     projectsTable.grantWriteData(splittingLambda);
-    projectsTable.grantWriteData(triggerChargeLambda);
 
     projectsTable.grantReadData(getUsersApiKeysLambda);
 
-    projectsTable.grantReadWriteData(cancelSubscriptionLambda);
+    projectsTable.grantReadWriteData(downgradeSubscriptionLambda);
 
     processedImagesTable.grantWriteData(splittingLambda);
     processedImagesTable.grantReadData(getProcessedImagesLambda);
