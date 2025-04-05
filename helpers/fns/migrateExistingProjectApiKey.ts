@@ -4,11 +4,22 @@ import {
   GetUsagePlanKeyCommand,
   NotFoundException,
 } from "@aws-sdk/client-api-gateway";
+
 import { PROJECT_STATUS } from "../constants";
-import { updateApiKey } from "./updateApiKey";
 import { removeFromOldPlan } from "./removeFromOldPlan";
+import { updateApiKeyStatus } from "./updateApiKeyStatus";
+
 import { ApiKeyInfo } from "../../types/apiKeyInfo";
 
+/** what this does is this
+ 
+ if the usage plan the apikey is attached to is different from the one paid for,
+detach it from the current usage plan its attached to &
+attach it to the new usage plan that was paid for
+
+then
+if the api was for a project tht was cancelled enable the apikey again
+**/
 export async function migrateExistingProjectApiKey({
   apiKeyInfo,
   projectStatus,
@@ -31,8 +42,8 @@ export async function migrateExistingProjectApiKey({
     try {
       await apiGatewayClient.send(
         new GetUsagePlanKeyCommand({
-          usagePlanId: newUsagePlanId,
           keyId: apiKeyInfo.apiKeyId,
+          usagePlanId: newUsagePlanId,
         })
       );
 
@@ -57,6 +68,6 @@ export async function migrateExistingProjectApiKey({
   }
 
   if (projectStatus === PROJECT_STATUS.Inactive) {
-    await updateApiKey(apiGatewayClient, apiKeyInfo, "true");
+    await updateApiKeyStatus(apiGatewayClient, apiKeyInfo, "true");
   }
 }

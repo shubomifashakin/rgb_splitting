@@ -7,4 +7,5 @@ export const planNameValidator = z
   .transform((value) => value.toLowerCase().trim())
   .refine((value) => Object.values(PlanType).includes(value as PlanType), {
     message: "Invalid plan",
-  });
+  })
+  .transform((value) => value as PlanType);

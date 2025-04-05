@@ -1,8 +1,8 @@
 import { Callback, Handler } from "aws-lambda";
 import {
+  SecretsManagerClient,
   GetSecretValueCommand,
   GetSecretValueCommandOutput,
-  SecretsManagerClient,
 } from "@aws-sdk/client-secrets-manager";
 
 import * as jwt from "jsonwebtoken";
@@ -56,6 +56,8 @@ export const handler: Handler = async (
     }
 
     if (!publicKey.SecretString) {
+      console.log("Public key does not exist");
+
       return { statusCode: 500, body: JSON.stringify("Internal Server Error") };
     }
 

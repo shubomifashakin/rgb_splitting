@@ -1,17 +1,11 @@
 import { SQSBatchItemFailure, SQSBatchResponse, SQSEvent } from "aws-lambda";
 import {
-  GetSecretValueCommand,
   SecretsManagerClient,
+  GetSecretValueCommand,
   GetSecretValueCommandOutput,
 } from "@aws-sdk/client-secrets-manager";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import {
-  APIGatewayClient,
-  NotFoundException,
-  GetUsagePlanKeyCommand,
-  CreateUsagePlanKeyCommand,
-  UpdateApiKeyCommand,
-} from "@aws-sdk/client-api-gateway";
+import { APIGatewayClient } from "@aws-sdk/client-api-gateway";
 
 import {
   GetCommand,
@@ -23,10 +17,15 @@ import {
 import { ApiKeyInfo } from "../types/apiKeyInfo";
 import { ExpiredProject } from "../types/expiredSubscriptionProjectInfo";
 
-import { updateApiKey } from "../helpers/fns/updateApiKey";
-import { PlanType, PROJECT_STATUS } from "../helpers/constants";
-import { removeFromOldPlan } from "../helpers/fns/removeFromOldPlan";
+import { updateApiKeyStatus } from "../helpers/fns/updateApiKeyStatus";
+import {
+  PlanType,
+  PROJECT_STATUS,
+  planTypeToStatus,
+  maxActiveFreeProjects,
+} from "../helpers/constants";
 import { usagePlanValidator } from "../helpers/schemaValidator/usagePlanValidator";
+import { migrateExistingProjectApiKey } from "../helpers/fns/migrateExistingProjectApiKey";
 
 const region = process.env.REGION!;
 const tableName = process.env.TABLE_NAME!;
@@ -61,54 +60,72 @@ export const handler = async (event: SQSEvent): Promise<SQSBatchResponse> => {
           projectId: projectInfo.projectId,
         });
 
-        //find the project && check if they have up to 3 active free projects
-        const [foundProject, freeProjects] = await Promise.all([
+        //find the project && check if they have up to maxactive free projects
+        const [foundProject, freeProjects] = await Promise.allSettled([
           dynamo.send(
             new GetCommand({
               TableName: tableName,
               Key: {
-                projectId: projectInfo.projectId,
                 userId: projectInfo.userId,
+                projectId: projectInfo.projectId,
               },
-              ProjectionExpression: "apiKeyInfo",
+              ProjectionExpression: "apiKeyInfo, sub_status, currentPlan",
             })
           ),
 
+          //checks if they have the maxactive free projects
           dynamo.send(
             new QueryCommand({
               TableName: tableName,
               IndexName: "userIdIndex",
               KeyConditionExpression: "userId = :userId",
               ExpressionAttributeValues: {
-                ":planName": PlanType.Free,
                 ":userId": projectInfo.userId,
-                ":status": PROJECT_STATUS.Active,
+                ":status": planTypeToStatus[PlanType.Free],
               },
-              FilterExpression:
-                "currentPlan = :planName AND sub_status = :status",
-              Limit: 3,
+              FilterExpression: "sub_status = :status",
+              Limit: maxActiveFreeProjects,
             })
           ),
         ]);
 
-        if (!foundProject.Item) {
+        if (foundProject.status === "rejected") {
+          console.error(
+            `Error fetching project info, REASON ${foundProject.reason}`
+          );
+
+          throw new Error(
+            `Failed to get information of project that was scheduled for downgrade ${projectInfo.projectId},`
+          );
+        }
+
+        if (!foundProject.value.Item) {
           throw new Error(
             `Project not found for ${projectInfo.email}, projectId ${projectInfo.projectId}`
           );
         }
 
-        console.log(
-          "AMOUNT OF ACTIVE FREE PROJECTS",
-          freeProjects.Items?.length
-        );
+        if (freeProjects.status === "fulfilled") {
+          console.log(
+            "TOTAL ACTIVE FREE PROJECTS --->",
+            freeProjects.value.Items?.length
+          );
+        }
 
         const canHaveFreePlan =
-          freeProjects.Items && freeProjects.Items.length < 3;
+          freeProjects.status === "fulfilled"
+            ? freeProjects.value.Items &&
+              freeProjects.value.Items.length < maxActiveFreeProjects
+            : false;
 
         const {
           apiKeyInfo: { apiKeyId, usagePlanId },
-        } = foundProject.Item as {
+          sub_status,
+          currentPlan,
+        } = foundProject.value.Item as {
           apiKeyInfo: ApiKeyInfo;
+          sub_status: PROJECT_STATUS;
+          currentPlan: PlanType;
         };
 
         //get all the available usagePlanIds, if not already available
@@ -141,46 +158,17 @@ export const handler = async (event: SQSEvent): Promise<SQSBatchResponse> => {
 
         //if they can have a free plan, remove the key from their old usage plan & attach to free usage plan
         if (canHaveFreePlan) {
-          await removeFromOldPlan({ apiKeyId, usagePlanId }, apiGatewayClient);
-
-          let isAttachedToFreePlan = false;
-
-          try {
-            await apiGatewayClient.send(
-              new GetUsagePlanKeyCommand({
-                usagePlanId: allUsagePlans.free,
-                keyId: apiKeyId,
-              })
-            );
-
-            isAttachedToFreePlan = true;
-          } catch (error: unknown) {
-            // If NotFoundException, the key is not in the free plan
-            if (error instanceof NotFoundException) {
-              isAttachedToFreePlan = false;
-            } else {
-              throw error;
-            }
-          }
-
-          console.log("is attached to free plan", isAttachedToFreePlan);
-
-          if (!isAttachedToFreePlan) {
-            console.log("attaching to free plan");
-
-            await apiGatewayClient.send(
-              new CreateUsagePlanKeyCommand({
-                usagePlanId: allUsagePlans.free,
-                keyId: apiKeyId,
-                keyType: "API_KEY",
-              })
-            );
-          }
+          await migrateExistingProjectApiKey({
+            apiGatewayClient,
+            projectStatus: sub_status,
+            newUsagePlanId: allUsagePlans.free,
+            apiKeyInfo: { usagePlanId, apiKeyId },
+          });
         }
 
         //disable the apikey if they cannot have a free plan
         if (!canHaveFreePlan) {
-          await updateApiKey(
+          await updateApiKeyStatus(
             apiGatewayClient,
             { apiKeyId, usagePlanId },
             "false"
@@ -197,12 +185,12 @@ export const handler = async (event: SQSEvent): Promise<SQSBatchResponse> => {
             UpdateExpression:
               "set apiKeyInfo.usagePlanId = :usagePlanId, currentPlan = :planName, sub_status = :subStatus",
             ExpressionAttributeValues: {
-              ":planName": PlanType.Free,
+              ":planName": canHaveFreePlan ? PlanType.Free : currentPlan,
               ":usagePlanId": canHaveFreePlan
                 ? allUsagePlans.free
                 : usagePlanId,
               ":subStatus": canHaveFreePlan
-                ? PROJECT_STATUS.Active
+                ? planTypeToStatus[PlanType.Free]
                 : PROJECT_STATUS.Inactive,
             },
           })

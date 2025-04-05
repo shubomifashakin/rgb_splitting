@@ -1,22 +1,26 @@
 import { APIGatewayClient } from "@aws-sdk/client-api-gateway";
 import {
+  SecretsManagerClient,
   GetSecretValueCommand,
   GetSecretValueCommandOutput,
-  SecretsManagerClient,
 } from "@aws-sdk/client-secrets-manager";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { APIGatewayProxyEventV2, Handler } from "aws-lambda";
 import {
-  DynamoDBDocumentClient,
-  UpdateCommand,
   GetCommand,
+  UpdateCommand,
+  DynamoDBDocumentClient,
 } from "@aws-sdk/lib-dynamodb";
 
 import { ApiKeyInfo } from "../types/apiKeyInfo";
 import { ChargeCompletedData } from "../types/webHookEventTypes";
 import { ChargeVerificationStatus } from "../types/chargeVerificationStatus";
 
-import { PlanType, PROJECT_STATUS } from "../helpers/constants";
+import {
+  PlanType,
+  planTypeToStatus,
+  PROJECT_STATUS,
+} from "../helpers/constants";
 import { getOneMonthFromDate } from "../helpers/fns/oneMonthFromDate";
 import { CreateApiKeyAndAttachToUsagePlan } from "../helpers/fns/createApiKey";
 import { webHookEventValidator } from "../helpers/schemaValidator/webhookEventValidator";
@@ -113,7 +117,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
       throw new Error("WEBHOOK EVENT SCHEMA VALIDATION FAILED");
     }
 
-    console.log("verified webhook event data successfully");
+    console.info("verified webhook event data successfully");
 
     if (
       webHookEvent.event === "charge.completed" &&
@@ -170,18 +174,18 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
       //if the project does not exist, then its a new project
       if (!existingProject.Item) {
         const res = await CreateApiKeyAndAttachToUsagePlan({
+          tableName,
+          apiGatewayClient,
+          dynamoClient: dynamo,
+          createdAt: eventData.created_at,
           email: eventData.customer.email,
           userId: webHookEvent.meta_data.userId,
-          tableName,
           projectId: webHookEvent.meta_data.projectId,
-          createdAt: eventData.created_at,
           projectName: webHookEvent.meta_data.projectName,
-          currentPlan: webHookEvent.meta_data.planName as PlanType,
+          currentPlan: webHookEvent.meta_data.planName,
           usagePlanId: webHookEvent.meta_data.usagePlanId,
           cardExpiry: chargeVerificationRes.data.card.expiry,
           cardToken: chargeVerificationRes.data.card.token,
-          apiGatewayClient,
-          dynamoClient: dynamo,
         });
 
         return res;
@@ -206,13 +210,14 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
         new UpdateCommand({
           TableName: tableName,
           Key: {
-            projectId: webHookEvent.meta_data.projectId,
             userId: webHookEvent.meta_data.userId,
+            projectId: webHookEvent.meta_data.projectId,
           },
           UpdateExpression:
             "set nextPaymentDate = :currentTimestamp, currentBillingDate = :currentBillingDate, apiKeyInfo.usagePlanId = :usagePlanId, currentPlan = :planName, cardTokenInfo.cardToken = :cardToken, cardTokenInfo.cardExpiry = :cardExpiry, sub_status = :sub_status",
           ExpressionAttributeValues: {
-            ":sub_status": PROJECT_STATUS.Active, //if they cancelled their account b4, activate it
+            ":sub_status":
+              planTypeToStatus[webHookEvent.meta_data.planName as PlanType], //if they cancelled their account b4, activate it
             ":planName": webHookEvent.meta_data.planName,
             ":usagePlanId": webHookEvent.meta_data.usagePlanId, //update the usagePlanId to the one they paid for
             ":cardToken": chargeVerificationRes.data.card.token, //if the user was on free plan b4, they would have an emoty cardToken info so update it
@@ -223,7 +228,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
         })
       );
 
-      console.log("completed successfully");
+      console.info("completed successfully");
     }
 
     return {

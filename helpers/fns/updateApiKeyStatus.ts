@@ -4,7 +4,7 @@ import {
 } from "@aws-sdk/client-api-gateway";
 import { ApiKeyInfo } from "../../types/apiKeyInfo";
 
-export async function updateApiKey(
+export async function updateApiKeyStatus(
   apiGatewayClient: APIGatewayClient,
   apiKeyInfo: ApiKeyInfo,
   value: "true" | "false"

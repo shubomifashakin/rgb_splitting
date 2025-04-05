@@ -4,7 +4,7 @@ import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
 
 import { validatePlan } from "../helpers/fns/validatePlan";
-import { PlanType, PROJECT_STATUS } from "../helpers/constants";
+import { PlanType, planTypeToStatus } from "../helpers/constants";
 
 import { ExpiredProject } from "../types/expiredSubscriptionProjectInfo";
 
@@ -36,157 +36,196 @@ export const handler: Handler = async (event: SQSEvent | null) => {
   //if it wasnt, it will be undefined
   const cursor =
     event && event?.Records?.[0]?.body
-      ? JSON.parse(event.Records[0].body)
+      ? (JSON.parse(event.Records[0].body) as {
+          pro: Record<string, any> | undefined;
+          exec: Record<string, any> | undefined;
+        })
       : undefined;
 
-  console.log("STARTING CURSOR", cursor);
+  console.log("STARTING CURSORS", cursor);
 
   const batchLimit = 2500; //TODO: CHANGE TO 2500
 
   try {
     //get all the projects with pro or exec subscriptions that are active & the nextPaymentDate is less than  or equal to the current date
-    const projectsReq = await dynamo.send(
-      new QueryCommand({
-        IndexName: "expiredSubscriptionIndex",
-        TableName: tableName,
-        KeyConditionExpression:
-          "sub_status = :status AND nextPaymentDate <= :currentDate",
-        ExpressionAttributeValues: {
-          ":currentDate": Date.now(),
-          ":status": PROJECT_STATUS.Active,
-          ":excludedPlan": PlanType.Free,
-        },
-        FilterExpression: "currentPlan <> :excludedPlan",
-        ProjectionExpression:
-          "projectId, email, userId, projectName, nextPaymentDate, currentPlan, cardTokenInfo",
-        Limit: batchLimit,
-        ExclusiveStartKey: cursor,
-      })
+    const [proExpiringProjectsReq, execExpiringProjectsReq] = await Promise.all(
+      [
+        dynamo.send(
+          new QueryCommand({
+            IndexName: "expiredSubscriptionIndex",
+            TableName: tableName,
+            KeyConditionExpression:
+              "sub_status = :status AND nextPaymentDate <= :currentDate",
+            ExpressionAttributeValues: {
+              ":currentDate": Date.now(),
+              ":status": planTypeToStatus[PlanType.Pro],
+            },
+            ProjectionExpression:
+              "projectId, email, userId, projectName, nextPaymentDate, currentPlan, cardTokenInfo",
+            Limit: batchLimit,
+            ExclusiveStartKey: cursor?.pro,
+          })
+        ),
+        dynamo.send(
+          new QueryCommand({
+            IndexName: "expiredSubscriptionIndex",
+            TableName: tableName,
+            KeyConditionExpression:
+              "sub_status = :status AND nextPaymentDate <= :currentDate",
+            ExpressionAttributeValues: {
+              ":currentDate": Date.now(),
+              ":status": planTypeToStatus[PlanType.Executive],
+            },
+            ProjectionExpression:
+              "projectId, email, userId, projectName, nextPaymentDate, currentPlan, cardTokenInfo",
+            Limit: batchLimit,
+            ExclusiveStartKey: cursor?.exec,
+          })
+        ),
+      ]
     );
 
-    //if there are no project items and theres also no next batch, exit
+    //if there are no expired projects at all, exit
     if (
-      (!projectsReq.Items || !projectsReq.Items.length) &&
-      !projectsReq.LastEvaluatedKey
+      proExpiringProjectsReq.Items &&
+      !proExpiringProjectsReq.Items.length &&
+      execExpiringProjectsReq.Items &&
+      !execExpiringProjectsReq.Items.length
     ) {
       console.log("found no projects with expired subscriptions");
-
       return;
     }
 
-    //the expired projects to be processed
-    if (projectsReq.Items && projectsReq.Items.length) {
-      const projects = projectsReq.Items as ExpiredProject[];
+    const projects = [
+      ...(proExpiringProjectsReq.Items || []),
+      ...(execExpiringProjectsReq.Items || []),
+    ] as ExpiredProject[];
 
-      console.log("EXPIRED PROJECTS", projects);
+    console.log("EXPIRED PROJECTS", projects);
 
-      //we loop through each user & try to resubscribe them, max 2 attempts
-      for (const project of projects) {
-        let attempts = 0;
+    //we loop through each user & try to resubscribe them, max 2 attempts
+    for (const project of projects) {
+      let attempts = 0;
 
-        while (attempts < 2) {
-          //delay the execution by 1 second
-          await new Promise((resolve) => setTimeout(resolve, 1000));
+      while (attempts < 2) {
+        //delay the execution by 1 second
+        await new Promise((resolve) => setTimeout(resolve, 1000));
 
-          try {
-            const { planDetails, chosenUsagePlan, paymentGatewaySecret } =
-              await validatePlan({
-                paymentGatewaySecretName,
-                usagePlanSecretName,
-                planName: project.currentPlan,
-                region,
-                paymentGatewayUrl,
+        try {
+          const { planDetails, chosenUsagePlanId, paymentGatewaySecret } =
+            await validatePlan({
+              paymentGatewaySecretName,
+              usagePlanSecretName,
+              planName: project.currentPlan,
+              region,
+              paymentGatewayUrl,
+            });
+
+          const chargeReq = await fetch(
+            `${paymentGatewayUrl}/tokenized-charges`,
+            {
+              method: "POST",
+              body: JSON.stringify({
+                email: project.email,
+                currency: planDetails.currency,
+                token: project.cardTokenInfo.cardToken,
+                countryCode: "NG",
+                amount: planDetails.amount,
+                tx_ref: `${project.projectId}-${project.nextPaymentDate}`,
+                narration: `Renewal Charge for project: ${project.projectName}`,
+                meta: {
+                  userId: project.userId,
+                  projectId: project.projectId,
+                  usagePlanId: chosenUsagePlanId,
+                  planName: planDetails.name.toLowerCase().trim(),
+                  projectName: project.projectName.toLowerCase().trim(),
+                },
+              }),
+              headers: {
+                Authorization: `Bearer ${paymentGatewaySecret}`,
+                "Content-Type": "application/json",
+              },
+            }
+          );
+
+          if (!chargeReq.ok) {
+            const errorMessage = await chargeReq.json();
+
+            //only retry for server/netwrk errors
+            if (chargeReq.status >= 500) {
+              throw new Error(errorMessage.message);
+            }
+
+            console.log("SENDING USER TO DOWNGRADE QUEUE", project);
+
+            await sqsQueue
+              .send(
+                new SendMessageCommand({
+                  MessageBody: JSON.stringify(project),
+                  QueueUrl: downgradeSubscriptionQueueUrl,
+                })
+              )
+              .catch((error: unknown) => {
+                console.error(
+                  "ERROR: Failed to send project with expired subscription to queue",
+                  error,
+                  project
+                );
               });
 
-            const chargeReq = await fetch(
-              `${paymentGatewayUrl}/tokenized-charges`,
-              {
-                method: "POST",
-                body: JSON.stringify({
-                  email: project.email,
-                  currency: planDetails.currency,
-                  token: project.cardTokenInfo.cardToken,
-                  countryCode: "NG",
-                  amount: planDetails.amount,
-                  tx_ref: `${project.projectId}-${project.nextPaymentDate}`,
-                  narration: `Renewal Charge for project: ${project.projectName}`,
-                  meta: {
-                    userId: project.userId,
-                    projectId: project.projectId,
-                    usagePlanId: chosenUsagePlan,
-                    planName: planDetails.name.toLowerCase().trim(),
-                    projectName: project.projectName.toLowerCase().trim(),
-                  },
-                }),
-                headers: {
-                  Authorization: `Bearer ${paymentGatewaySecret}`,
-                  "Content-Type": "application/json",
-                },
-              }
-            );
-
-            if (!chargeReq.ok) {
-              const errorMessage = await chargeReq.json();
-
-              //only retry for server/netwrk errors
-              if (chargeReq.status >= 500) {
-                throw new Error(errorMessage.message);
-              }
-
-              await sqsQueue
-                .send(
-                  new SendMessageCommand({
-                    MessageBody: JSON.stringify(project),
-                    QueueUrl: downgradeSubscriptionQueueUrl,
-                  })
-                )
-                .catch((error: unknown) => {
-                  console.error(
-                    "ERROR: Failed to send project with expired subscription to queue",
-                    error,
-                    project
-                  );
-                });
-
-              break;
-            }
-
-            //user was successfully charged
-            console.log("charged user  successfully");
             break;
-          } catch (error: unknown) {
-            console.error(`Error charging user: ${project.email}`, error);
+          }
 
-            attempts++;
+          //user was successfully charged
+          console.log("charged user  successfully");
+          break;
+        } catch (error: unknown) {
+          console.error(`Error charging user: ${project.email}`, error);
 
-            if (attempts >= 2) {
-              await sqsQueue
-                .send(
-                  new SendMessageCommand({
-                    MessageBody: JSON.stringify(project),
-                    QueueUrl: downgradeSubscriptionQueueUrl,
-                  })
-                )
-                .catch((error: unknown) => {
-                  console.error(
-                    "ERROR: Failed to send project with expired subscription to queue",
-                    error,
-                    project
-                  );
-                });
-            }
+          attempts++;
+
+          if (attempts >= 2) {
+            console.log("SENDING USER TO DOWNGRADE QUEUE", project);
+            await sqsQueue
+              .send(
+                new SendMessageCommand({
+                  MessageBody: JSON.stringify(project),
+                  QueueUrl: downgradeSubscriptionQueueUrl,
+                })
+              )
+              .catch((error: unknown) => {
+                console.error(
+                  "ERROR: Failed to send project with expired subscription to queue",
+                  error,
+                  project
+                );
+              });
           }
         }
       }
     }
 
-    console.log("NEXT CURSOR", projectsReq.LastEvaluatedKey);
+    console.log(
+      "NEXT CURSORS",
+      proExpiringProjectsReq.LastEvaluatedKey,
+      execExpiringProjectsReq.LastEvaluatedKey
+    );
 
     //if there are more projects to process, send them to the queue -- THIS IS TRUE IF THERE IS A LAST EVALUATEDKEY RETURNED
-    if (projectsReq.LastEvaluatedKey) {
+    if (
+      proExpiringProjectsReq.LastEvaluatedKey ||
+      execExpiringProjectsReq.LastEvaluatedKey
+    ) {
+      console.log(
+        "There are more unprocessed projects, sending cursors to resubscribe queue"
+      );
+
       await sqsQueue.send(
         new SendMessageCommand({
-          MessageBody: JSON.stringify(projectsReq.LastEvaluatedKey),
+          MessageBody: JSON.stringify({
+            pro: proExpiringProjectsReq.LastEvaluatedKey,
+            exec: execExpiringProjectsReq.LastEvaluatedKey,
+          }),
           QueueUrl: resubscribeQueueUrl,
         })
       );

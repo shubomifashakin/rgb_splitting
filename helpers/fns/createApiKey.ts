@@ -8,7 +8,7 @@ import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 
 import { v4 as uuid } from "uuid";
 
-import { PlanType, PROJECT_STATUS } from "../constants";
+import { PlanType, planTypeToStatus } from "../constants";
 import { getOneMonthFromDate } from "./oneMonthFromDate";
 
 import { ApiKeyInfo } from "../../types/apiKeyInfo";
@@ -83,7 +83,6 @@ export async function CreateApiKeyAndAttachToUsagePlan({
     new PutCommand({
       TableName: tableName,
       Item: {
-        sub_status: PROJECT_STATUS.Active as PROJECT_STATUS,
         email,
         userId,
         projectId,
@@ -94,8 +93,8 @@ export async function CreateApiKeyAndAttachToUsagePlan({
 
         apiKey: apiKey.value,
 
-        //if the user is on free plan, nextPaymentDate and currentBillingDate will be empty strings
         nextPaymentDate: getOneMonthFromDate(createdAt), //TODO: CHANGE TO ONE MONTH FROM NOW
+        sub_status: planTypeToStatus[currentPlan],
         currentBillingDate: new Date(createdAt).getTime(),
         createdAt: new Date(createdAt).getTime(),
       },

@@ -10,17 +10,14 @@ import {
   DynamoDBDocumentClient,
 } from "@aws-sdk/lib-dynamodb";
 
-import {
-  APIGatewayClient,
-  UpdateApiKeyCommand,
-} from "@aws-sdk/client-api-gateway";
+import { APIGatewayClient } from "@aws-sdk/client-api-gateway";
 
 import { ApiKeyInfo } from "../types/apiKeyInfo";
 
 import { PROJECT_STATUS } from "../helpers/constants";
 import { transformZodError } from "../helpers/fns/transformZodError";
+import { updateApiKeyStatus } from "../helpers/fns/updateApiKeyStatus";
 import { projectIdValidator } from "../helpers/schemaValidator/projectIdValidator";
-import { updateApiKey } from "../helpers/fns/updateApiKey";
 
 const region = process.env.REGION!;
 const tableName = process.env.TABLE_NAME!;
@@ -93,7 +90,7 @@ export const handler = async (event: CustomAPIGatewayEventV2) => {
     console.log("disabling key");
 
     //disable the apikey
-    await updateApiKey(apiGatewayClient, apiKeyInfo, "false");
+    await updateApiKeyStatus(apiGatewayClient, apiKeyInfo, "false");
 
     //update the status of the project
     await dynamo.send(

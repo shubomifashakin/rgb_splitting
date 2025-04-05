@@ -41,6 +41,8 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
   };
 
   if (!event.body) {
+    console.info("No event body received");
+
     return {
       statusCode: 400,
       body: JSON.stringify({
@@ -53,6 +55,8 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
   const apiKey = event.headers?.["x-api-key"];
 
   if (!apiKey) {
+    console.info("No api key in header");
+
     return { statusCode: 400, body: JSON.stringify("Unauthorized"), headers };
   }
 
@@ -62,6 +66,8 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
   const { data, success, error } = processValidator.safeParse(body);
 
   if (!success) {
+    console.error("Error verifying process specified by user -->", error);
+
     return {
       headers,
       statusCode: 400,

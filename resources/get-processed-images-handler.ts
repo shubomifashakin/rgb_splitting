@@ -25,7 +25,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     };
   }
 
-  const { success, data } = z
+  const { success, data, error } = z
     .object({
       projectId: projectIdValidator,
       imageId: z.string().uuid(),
@@ -33,6 +33,8 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     .safeParse(pathParameters);
 
   if (!success) {
+    console.error("Failed to validate image key --->", error.issues);
+
     return { statusCode: 400, body: "Bad Request - Invalid image key" };
   }
 

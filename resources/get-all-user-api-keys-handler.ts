@@ -42,7 +42,7 @@ export const handler = async (event: CustomAPIGatewayEventV2) => {
         Limit: 10,
         ScanIndexForward: false,
         ProjectionExpression:
-          "createdAt, apiKey, projectId, projectName, currentPlan, sub_status",
+          "apiKey, projectId, projectName, currentPlan, sub_status, nextPaymentDate",
       })
     );
 

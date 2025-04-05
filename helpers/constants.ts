@@ -7,11 +7,20 @@ export enum PlanType {
 }
 
 export enum PROJECT_STATUS {
-  Active = "active",
   Inactive = "inactive",
+  ActivePro = "active-pro",
+  ActiveFree = "active-free",
+  ActiveExecutive = "active-executive",
 }
 
+export const planTypeToStatus = {
+  [PlanType.Pro]: PROJECT_STATUS.ActivePro,
+  [PlanType.Free]: PROJECT_STATUS.ActiveFree,
+  [PlanType.Executive]: PROJECT_STATUS.ActiveExecutive,
+};
+
 export const maxProcessesInArray = 3;
+export const maxActiveFreeProjects = 3;
 export const processedImagesRouteVar = "image";
 
 export const default_grain = 0;

@@ -5,18 +5,22 @@ import { v4 as uuid } from "uuid";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { APIGatewayClient } from "@aws-sdk/client-api-gateway";
 import {
-  DynamoDBDocumentClient,
   GetCommand,
   UpdateCommand,
+  DynamoDBDocumentClient,
 } from "@aws-sdk/lib-dynamodb";
 
 import { ApiKeyInfo } from "../types/apiKeyInfo";
 import { validatePlan } from "../helpers/fns/validatePlan";
-import { PlanType, PROJECT_STATUS } from "../helpers/constants";
+import {
+  PlanType,
+  PROJECT_STATUS,
+  planTypeToStatus,
+} from "../helpers/constants";
 import { transformZodError } from "../helpers/fns/transformZodError";
-import { newPaymentRequestBodyValidator } from "../helpers/schemaValidator/newPaymentRequestBodyValidator";
 import { CreateApiKeyAndAttachToUsagePlan } from "../helpers/fns/createApiKey";
 import { migrateExistingProjectApiKey } from "../helpers/fns/migrateExistingProjectApiKey";
+import { newPaymentRequestBodyValidator } from "../helpers/schemaValidator/newPaymentRequestBodyValidator";
 
 const region = process.env.REGION!;
 const tableName = process.env.TABLE_NAME!;
@@ -66,7 +70,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
   const { planName, email, userId, fullName, projectId, projectName } = data;
 
   try {
-    const { planDetails, chosenUsagePlan, paymentGatewaySecret } =
+    const { planDetails, chosenUsagePlanId, paymentGatewaySecret } =
       await validatePlan({
         region,
         planName,
@@ -75,23 +79,23 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
         paymentGatewaySecretName,
       });
 
-    //if the plan is free, no need for payments, create the api, attach to the free usage plan & shekinah
+    //if the plan is free, no need for payments, create the api, attach to the free usage plan & shikenah
     if (planName === PlanType.Free) {
       if (!projectId) {
-        //creates the api key, attaches it to the correct usage plan & stores in db
+        //creates the project, the api key, attaches it to the correct usage plan & stores in db
         const res = await CreateApiKeyAndAttachToUsagePlan({
           email,
           userId,
           tableName,
           projectId: uuid(),
-          createdAt: new Date().toDateString(),
           projectName,
-          currentPlan: planName,
-          usagePlanId: chosenUsagePlan,
           cardExpiry: "",
           cardToken: "",
-          apiGatewayClient,
           dynamoClient,
+          apiGatewayClient,
+          currentPlan: planName,
+          usagePlanId: chosenUsagePlanId,
+          createdAt: new Date().toDateString(),
         });
 
         return res;
@@ -102,8 +106,8 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
         new GetCommand({
           TableName: tableName,
           Key: {
-            projectId,
             userId,
+            projectId,
           },
           ProjectionExpression: "apiKeyInfo, sub_status",
         })
@@ -116,14 +120,14 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
           userId,
           tableName,
           projectId: uuid(),
-          createdAt: new Date().toDateString(),
           projectName,
-          currentPlan: planName,
-          usagePlanId: chosenUsagePlan,
           cardExpiry: "",
           cardToken: "",
-          apiGatewayClient,
           dynamoClient,
+          apiGatewayClient,
+          currentPlan: planName,
+          usagePlanId: chosenUsagePlanId,
+          createdAt: new Date().toDateString(),
         });
 
         return res;
@@ -134,12 +138,12 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
         sub_status: PROJECT_STATUS;
       };
 
-      //migrate the api key to the new usage plan, if necessary
+      //migrate the api key to the new usage plan & activate it if it cancelled b4
       await migrateExistingProjectApiKey({
+        apiGatewayClient,
+        newUsagePlanId: chosenUsagePlanId,
         apiKeyInfo: projectInfo.apiKeyInfo,
         projectStatus: projectInfo.sub_status,
-        newUsagePlanId: chosenUsagePlan,
-        apiGatewayClient,
       });
 
       await dynamoClient.send(
@@ -151,8 +155,8 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
           },
           ExpressionAttributeValues: {
             ":currentPlan": planName,
-            ":usagePlanId": chosenUsagePlan,
-            ":sub_status": PROJECT_STATUS.Active,
+            ":usagePlanId": chosenUsagePlanId,
+            ":sub_status": planTypeToStatus[planName],
           },
           UpdateExpression:
             "set sub_status = :sub_status, currentPlan = :currentPlan, apiKeyInfo.usagePlanId = :usagePlanId",
@@ -188,7 +192,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
         userId,
         planName,
         projectName,
-        usagePlanId: chosenUsagePlan,
+        usagePlanId: chosenUsagePlanId,
         projectId: projectId ? projectId : uuid(),
       },
       payment_options: "card",

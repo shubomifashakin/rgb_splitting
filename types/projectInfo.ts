@@ -1,3 +1,4 @@
+import { PROJECT_STATUS } from "../helpers/constants";
 import { ApiKeyInfo } from "./apiKeyInfo";
 import { CardTokenInfo } from "./cardTokenInfo";
 
@@ -7,12 +8,12 @@ export interface ProjectInfo {
   userId: string;
   createdAt: number;
   projectId: string;
-  sub_status: string;
   projectName: string;
   currentPlan: string;
   nextPaymentDate: number;
   currentBillingDate: number;
 
   apiKeyInfo: ApiKeyInfo;
+  sub_status: PROJECT_STATUS;
   cardTokenInfo: CardTokenInfo;
 }
