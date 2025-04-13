@@ -36,32 +36,34 @@ interface CustomAPIGatewayEventV2 extends APIGatewayProxyEventV2 {
 }
 
 export const handler = async (event: CustomAPIGatewayEventV2) => {
+  const headers = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "OPTIONS, POST, GET",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Api-Key",
+  };
+
   console.log(event);
 
   if (!event.requestContext.authorizer) {
-    return { statusCode: 400, body: "Unauthorized" };
+    return {
+      headers,
+      statusCode: 400,
+      body: JSON.stringify({ error: "Unauthorized" }),
+    };
   }
 
-  if (!event.body) {
-    return { statusCode: 400, body: "Bad Request" };
-  }
-
-  const body = JSON.parse(event.body);
-
-  if (!body.projectId) {
-    return { statusCode: 400, body: "Bad Request -- No Project Id" };
-  }
+  const pathParams = event.pathParameters?.projectId;
 
   const {
     success,
     error,
     data: projectId,
-  } = projectIdValidator.safeParse(body.projectId);
+  } = projectIdValidator.safeParse(pathParams);
 
   if (!success) {
     console.error(error);
 
-    return { statusCode: 400, body: transformZodError(error) };
+    return { statusCode: 400, body: transformZodError(error), headers };
   }
 
   const userId = event.requestContext.authorizer.principalId;
@@ -81,7 +83,11 @@ export const handler = async (event: CustomAPIGatewayEventV2) => {
     if (!usersApiKeys.Item) {
       console.log("Project not found");
 
-      return { statusCode: 404, body: "No Project Found" };
+      return {
+        headers,
+        statusCode: 404,
+        body: JSON.stringify({ error: "Project not found" }),
+      };
     }
 
     //get the apikey info
@@ -110,6 +116,7 @@ export const handler = async (event: CustomAPIGatewayEventV2) => {
     console.log("completed successfully");
 
     return {
+      headers,
       statusCode: 200,
       body: JSON.stringify({ message: "Successfully cancelled subscription" }),
     };

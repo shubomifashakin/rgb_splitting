@@ -23,8 +23,18 @@ interface CustomAPIGatewayEventV2 extends APIGatewayProxyEventV2 {
 export const handler = async (event: CustomAPIGatewayEventV2) => {
   console.log(event);
 
+  const headers = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "OPTIONS, POST, GET",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Api-Key",
+  };
+
   if (!event.requestContext.authorizer) {
-    return { statusCode: 400, body: "Unauthorized" };
+    return {
+      statusCode: 400,
+      body: JSON.stringify({ error: "Unauthorized" }),
+      headers,
+    };
   }
 
   const userId = event.requestContext.authorizer.principalId;
@@ -41,14 +51,17 @@ export const handler = async (event: CustomAPIGatewayEventV2) => {
         },
         Limit: 10,
         ScanIndexForward: false,
-        ProjectionExpression:
-          "apiKey, projectId, projectName, currentPlan, sub_status, nextPaymentDate",
+        ProjectionExpression: "projectId, projectName, currentPlan, sub_status",
       })
     );
 
     console.log("completed successfully");
 
-    return { statusCode: 200, body: JSON.stringify(usersApiKeys.Items) };
+    return {
+      statusCode: 200,
+      body: JSON.stringify(usersApiKeys.Items),
+      headers,
+    };
   } catch (error: unknown) {
     console.log("FAILED TO GET USERS API KEYS FROM DB", error);
 

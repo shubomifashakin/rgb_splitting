@@ -8,5 +8,5 @@ export function transformZodError(error: ZodError) {
     };
   });
 
-  return JSON.stringify({ errors });
+  return JSON.stringify({ error: errors });
 }

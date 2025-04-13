@@ -44,11 +44,11 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     console.info("No event body received");
 
     return {
+      headers,
       statusCode: 400,
       body: JSON.stringify({
-        message: "No process specified",
+        error: "No process specified",
       }),
-      headers,
     };
   }
 
@@ -57,7 +57,11 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
   if (!apiKey) {
     console.info("No api key in header");
 
-    return { statusCode: 400, body: JSON.stringify("Unauthorized"), headers };
+    return {
+      statusCode: 400,
+      body: JSON.stringify({ error: "Unauthorized" }),
+      headers,
+    };
   }
 
   const body = JSON.parse(event.body);
@@ -84,11 +88,11 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     grain.every((grain) => defaultGrain.includes(grain))
   ) {
     return {
+      headers,
       statusCode: 400,
       body: JSON.stringify({
-        message: "Process results in same image! Your post body may be empty.",
+        error: "Process results in same image! Your post body may be empty.",
       }),
-      headers,
     };
   }
 
@@ -108,11 +112,11 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
 
   if (!project.Items || !project.Items.length) {
     return {
+      headers,
       statusCode: 404,
       body: JSON.stringify({
-        message: "No project found for corresponding apikey",
+        error: "No project found for corresponding apikey",
       }),
-      headers,
     };
   }
 
@@ -130,7 +134,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
       headers,
       statusCode: 400,
       body: JSON.stringify({
-        message: "Free Plan does not support multiple channels or grains.",
+        error: "Free Plan does not support multiple channels or grains.",
       }),
     };
   }

@@ -158,6 +158,14 @@ export class RgbSplittingStack extends cdk.Stack {
       }
     );
 
+    processedImagesTable.addGlobalSecondaryIndex({
+      indexName: "projectIdIndex",
+      partitionKey: {
+        name: "projectId",
+        type: AttributeType.STRING,
+      },
+    });
+
     //this queue is used to store messages that failed to be downgraded
     const downgradeSubscriptionDLQ = new Queue(
       this,
@@ -287,16 +295,16 @@ export class RgbSplittingStack extends cdk.Stack {
       }
     );
 
-    //used to get all the api keys owned by a particular user
-    const getUsersApiKeysLambda = new NodejsFunction(
+    //used to get all the projects the user has created
+    const getUsersProjectsLambda = new NodejsFunction(
       this,
-      `${props.variables.projectPrefix}-get-all-user-api-keys-lambda`,
+      `${props.variables.projectPrefix}-get-users-projects-lambda`,
       {
-        functionName: `${props.variables.projectPrefix}-get-all-user-api-keys-lambda`,
+        functionName: `${props.variables.projectPrefix}-get-users-projects-lambda`,
         description:
-          "This lambda is used for getting all the api keys for a particula user",
+          "This lambda is used for getting all the projects for a user",
         runtime: Runtime.NODEJS_22_X,
-        entry: "./resources/get-all-user-api-keys-handler.ts",
+        entry: "./resources/get-users-projects-handler.ts",
         handler: "handler",
         environment: {
           REGION: this.region,
@@ -420,6 +428,60 @@ export class RgbSplittingStack extends cdk.Stack {
           AVAILABLE_PLANS_SECRET_NAME: availablePlansSecretName,
         },
         timeout: cdk.Duration.seconds(10),
+      }
+    );
+
+    const getProjectInfoLambda = new NodejsFunction(
+      this,
+      `${props.variables.projectPrefix}-get-project-info-lambda`,
+      {
+        functionName: `${props.variables.projectPrefix}-get-project-info-lambda`,
+        description:
+          "This lambda is used to get the info for a particular project",
+        runtime: Runtime.NODEJS_22_X,
+        entry: "./resources/get-project-info-handler.ts",
+        handler: "handler",
+        environment: {
+          REGION: this.region,
+          TABLE_NAME: projectsTable.tableName,
+          PROCESSED_IMAGES_TABLE_NAME: processedImagesTable.tableName,
+        },
+        timeout: cdk.Duration.seconds(10),
+      }
+    );
+
+    const updateProjectNameLambda = new NodejsFunction(
+      this,
+      `${props.variables.projectPrefix}-update-project-name-lambda`,
+      {
+        functionName: `${props.variables.projectPrefix}-update-project-name-lambda`,
+        description:
+          "This lambda is used to update the name of a particular project",
+        runtime: Runtime.NODEJS_22_X,
+        entry: "./resources/update_project_name_handler.ts",
+        handler: "handler",
+        environment: {
+          REGION: this.region,
+          TABLE_NAME: projectsTable.tableName,
+        },
+        timeout: cdk.Duration.seconds(5),
+      }
+    );
+
+    const deleteProjectLambda = new NodejsFunction(
+      this,
+      `${props.variables.projectPrefix}-delete-project-lambda`,
+      {
+        functionName: `${props.variables.projectPrefix}-delete-project-lambda`,
+        description: "This lambda is used to delete a particular project",
+        runtime: Runtime.NODEJS_22_X,
+        entry: "./resources/delete_project_handler.ts",
+        handler: "handler",
+        environment: {
+          REGION: this.region,
+          TABLE_NAME: projectsTable.tableName,
+        },
+        timeout: cdk.Duration.seconds(5),
       }
     );
 
@@ -605,12 +667,12 @@ export class RgbSplittingStack extends cdk.Stack {
       new cdk.aws_cloudwatch_actions.SnsAction(snsTopic)
     );
 
-    //this alarm is triggered if there have been 5 failures in the lambda for getting users apikeys in the last 10 minutes
+    //this alarm is triggered if there have been 5 failures in the lambda for getting users projects in the last 10 minutes
     const getUsersApiKeysAlarm = new cdk.aws_cloudwatch.Alarm(
       this,
       `${props.variables.projectPrefix}-get-users-apikeys-alarm`,
       {
-        metric: getUsersApiKeysLambda.metricErrors({
+        metric: getUsersProjectsLambda.metricErrors({
           period: cdk.Duration.minutes(10),
           statistic: "sum",
         }),
@@ -814,20 +876,28 @@ export class RgbSplittingStack extends cdk.Stack {
     //route for webhook events
     const webHookEventsRoute = v1Root.addResource("webhook");
 
-    //route to fetch all the api keys a user has
-    const getUsersApiKeysRoute = v1Root.addResource("keys");
+    //route to fetch  the projects a user has created
+    const getUsersProjectsRoute = v1Root.addResource("projects");
 
     //route to request payments
     const triggerChargeRoute = v1Root.addResource("trigger-payment");
 
-    //route to get processed results
-    const getProcessedImagesRoute = v1Root
-      .addResource("{projectId}")
+    //route for getting project info
+    const projectInfoRoute = v1Root.addResource("{projectId}");
+
+    //route to update project name
+    const updateProjectNameRoute = projectInfoRoute.addResource("update");
+
+    //route to delete a project
+    const deleteProjectRoute = projectInfoRoute.addResource("delete");
+
+    //route to cancel a projects subscription
+    const cancelSubscriptionRoute = projectInfoRoute.addResource("cancel");
+
+    //route to get processed results -- USERS APPLICATION
+    const getProcessedImagesRoute = projectInfoRoute
       .addResource(processedImagesRouteVar)
       .addResource("{imageId}");
-
-    //route to cancel subscriptions
-    const cancelSubscriptionRoute = v1Root.addResource("cancel-subscription");
 
     generatePresignedUrlRoute.addMethod(
       HttpMethod.POST,
@@ -842,9 +912,9 @@ export class RgbSplittingStack extends cdk.Stack {
       new LambdaIntegration(webHookLambda)
     );
 
-    getUsersApiKeysRoute.addMethod(
+    getUsersProjectsRoute.addMethod(
       HttpMethod.GET,
-      new LambdaIntegration(getUsersApiKeysLambda),
+      new LambdaIntegration(getUsersProjectsLambda),
       {
         authorizer: userAuthorizer,
         authorizationType: AuthorizationType.CUSTOM,
@@ -856,6 +926,33 @@ export class RgbSplittingStack extends cdk.Stack {
       new LambdaIntegration(triggerChargeLambda)
     );
 
+    projectInfoRoute.addMethod(
+      HttpMethod.GET,
+      new LambdaIntegration(getProjectInfoLambda),
+      {
+        authorizer: userAuthorizer,
+        authorizationType: AuthorizationType.CUSTOM,
+      }
+    );
+
+    updateProjectNameRoute.addMethod(
+      HttpMethod.PATCH,
+      new LambdaIntegration(updateProjectNameLambda),
+      {
+        authorizer: userAuthorizer,
+        authorizationType: AuthorizationType.CUSTOM,
+      }
+    );
+
+    deleteProjectRoute.addMethod(
+      HttpMethod.DELETE,
+      new LambdaIntegration(deleteProjectLambda),
+      {
+        authorizer: userAuthorizer,
+        authorizationType: AuthorizationType.CUSTOM,
+      }
+    );
+
     getProcessedImagesRoute.addMethod(
       HttpMethod.GET,
       new LambdaIntegration(getProcessedImagesLambda),
@@ -863,7 +960,7 @@ export class RgbSplittingStack extends cdk.Stack {
     );
 
     cancelSubscriptionRoute.addMethod(
-      HttpMethod.POST,
+      HttpMethod.PATCH,
       new LambdaIntegration(cancelSubscriptionLambda),
       {
         authorizer: userAuthorizer,
@@ -980,6 +1077,19 @@ export class RgbSplittingStack extends cdk.Stack {
       })
     );
 
+    deleteProjectLambda.addToRolePolicy(
+      new PolicyStatement({
+        actions: ["apigateway:DELETE"],
+        resources: [
+          `arn:aws:apigateway:${this.region}::/apikeys`,
+          `arn:aws:apigateway:${this.region}::/apikeys/*`,
+          `arn:aws:apigateway:${this.region}::/usageplans`, //i did this to prevent circular dependency issues between lambda, the rest api & the usage plans
+          `arn:aws:apigateway:${this.region}::/usageplans/*/keys`,
+          `arn:aws:apigateway:${this.region}::/usageplans/*/keys/*`,
+        ],
+      })
+    );
+
     const eventBridgeRole = new Role(
       this,
       `${props.variables.projectPrefix}-resubscribe-event-role`,
@@ -1076,12 +1186,16 @@ export class RgbSplittingStack extends cdk.Stack {
     projectsTable.grantReadWriteData(cancelSubscriptionLambda);
 
     projectsTable.grantWriteData(splittingLambda);
+    projectsTable.grantWriteData(updateProjectNameLambda);
 
-    projectsTable.grantReadData(getUsersApiKeysLambda);
+    projectsTable.grantReadData(getProjectInfoLambda);
+    projectsTable.grantReadData(getUsersProjectsLambda);
+    projectsTable.grantReadWriteData(deleteProjectLambda);
 
     projectsTable.grantReadWriteData(downgradeSubscriptionLambda);
 
     processedImagesTable.grantWriteData(splittingLambda);
+    processedImagesTable.grantReadData(getProjectInfoLambda);
     processedImagesTable.grantReadData(getProcessedImagesLambda);
   }
 }

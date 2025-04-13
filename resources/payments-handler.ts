@@ -44,9 +44,9 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
 
   if (!event.body) {
     return {
-      statusCode: 400,
-      body: JSON.stringify({ message: "Bad Request - No body" }),
       headers,
+      statusCode: 400,
+      body: JSON.stringify({ error: "Bad Request - No body" }),
     };
   }
 
@@ -164,14 +164,9 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
       );
 
       return {
+        headers,
         statusCode: 200,
         body: JSON.stringify({ message: "Api key generated" }),
-        headers: {
-          "Access-Control-Allow-Origin": "*",
-          "Access-Control-Allow-Methods": "OPTIONS, POST, GET",
-          "Access-Control-Allow-Headers":
-            "Content-Type, Authorization, X-Api-Key",
-        },
       };
     }
 
@@ -221,9 +216,9 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     console.log("completed successfully");
 
     return {
+      headers,
       statusCode: 200,
       body: JSON.stringify(paymentResponse),
-      headers,
     };
   } catch (error: unknown) {
     console.error(
