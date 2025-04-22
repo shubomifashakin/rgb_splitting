@@ -44,7 +44,7 @@ export const handler: Handler = async (event: SQSEvent | null) => {
 
   console.log("STARTING CURSORS", cursor);
 
-  const batchLimit = 2500; //TODO: CHANGE TO 2500
+  const batchLimit = 1000; //TODO: CHANGE TO 1000
 
   try {
     //get all the projects with pro or exec subscriptions that are active & the nextPaymentDate is less than  or equal to the current date

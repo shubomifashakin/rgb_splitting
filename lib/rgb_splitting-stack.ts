@@ -560,7 +560,34 @@ export class RgbSplittingStack extends cdk.Stack {
       }
     );
 
+    //this alarm is triggered if there has been more than 6 invocations in the last 10 minutes
+    //just incase the lambda is recursively invoked too many times
+    const resubscribeInfoAlarm = new cdk.aws_cloudwatch.Alarm(
+      this,
+      `${props.variables.projectPrefix}-resubscribe-info-alaram`,
+      {
+        metric: resubscribeLambda.metricInvocations({
+          period: cdk.Duration.minutes(10),
+          statistic: "sum",
+        }),
+        evaluationPeriods: 1,
+        threshold: 6,
+        comparisonOperator:
+          cdk.aws_cloudwatch.ComparisonOperator
+            .GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+        actionsEnabled: true,
+        alarmName:
+          `${props.variables.projectPrefix}-resubscribe-info-alarm`.toUpperCase(),
+        alarmDescription:
+          "There have been 6 or more invocations in the lambda for resubscribing users in the last 10 minutes",
+      }
+    );
+
     resubscribeErrorAlarm.addAlarmAction(
+      new cdk.aws_cloudwatch_actions.SnsAction(snsTopic)
+    );
+
+    resubscribeInfoAlarm.addAlarmAction(
       new cdk.aws_cloudwatch_actions.SnsAction(snsTopic)
     );
 
@@ -753,6 +780,7 @@ export class RgbSplittingStack extends cdk.Stack {
         handler: userAuthorizerLambda,
         authorizerName: `${props.variables.projectPrefix}-rest-api-token-authorizer`,
         identitySource: "method.request.header.Authorization",
+        resultsCacheTtl: cdk.Duration.minutes(0), ///clerk uses short lived tokens, so caching was affecting auth
       }
     );
 
