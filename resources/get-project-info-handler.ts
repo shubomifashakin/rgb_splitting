@@ -92,6 +92,7 @@ export async function handler(event: CustomAPIGatewayEventV2) {
         "currentPlan, nextPaymentDate, currentBillingDate, sub_status, projectName";
     }
 
+    //TODO: PAGINATE THIS
     if (searchParamsData.field !== "gallery") {
       const item = await dynamo.send(
         new QueryCommand({
@@ -122,7 +123,6 @@ export async function handler(event: CustomAPIGatewayEventV2) {
     const item = await dynamo.send(
       new QueryCommand({
         TableName: processedImagesTableName,
-        IndexName: "projectIdIndex",
         KeyConditionExpression: "projectId = :projectId",
         ExpressionAttributeValues: {
           ":projectId": data.projectId,

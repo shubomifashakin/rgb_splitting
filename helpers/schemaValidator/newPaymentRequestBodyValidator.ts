@@ -24,5 +24,5 @@ export const newPaymentRequestBodyValidator = z.object({
     .optional()
     .transform((value) => value?.trim()),
 
-  projectId: projectIdValidator.optional(),
+  projectId: projectIdValidator.optional().nullable(),
 });

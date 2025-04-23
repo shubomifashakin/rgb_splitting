@@ -135,17 +135,30 @@ export class RgbSplittingStack extends cdk.Stack {
       },
     });
 
+    projectsTable.addGlobalSecondaryIndex({
+      indexName: "userIdSubStatusIndex",
+      partitionKey: {
+        name: "userId",
+        type: AttributeType.STRING,
+      },
+
+      sortKey: {
+        name: "sub_status",
+        type: AttributeType.STRING,
+      },
+    });
+
     const processedImagesTable = new Table(
       this,
-      `${props.variables.projectPrefix}-processed-images-table-sh`,
+      `${props.variables.projectPrefix}-processed-images-table`,
       {
-        tableName: `${props.variables.projectPrefix}-processed-images-table-sh`,
+        tableName: `${props.variables.projectPrefix}-processed-images-table`,
         partitionKey: {
-          name: "imageId",
+          name: "projectId",
           type: AttributeType.STRING,
         },
         sortKey: {
-          name: "projectId",
+          name: "imageId",
           type: AttributeType.STRING,
         },
         pointInTimeRecoverySpecification: {
@@ -157,14 +170,6 @@ export class RgbSplittingStack extends cdk.Stack {
             : cdk.RemovalPolicy.RETAIN,
       }
     );
-
-    processedImagesTable.addGlobalSecondaryIndex({
-      indexName: "projectIdIndex",
-      partitionKey: {
-        name: "projectId",
-        type: AttributeType.STRING,
-      },
-    });
 
     //this queue is used to store messages that failed to be downgraded
     const downgradeSubscriptionDLQ = new Queue(

@@ -39,7 +39,12 @@ export const handler = async (event: CustomAPIGatewayEventV2) => {
 
   const userId = event.requestContext.authorizer.principalId;
 
-  //TODO: PAGINATE THIS, ONLY 10 AT ONCE
+  const startKey = event.queryStringParameters?.query
+    ? JSON.parse(decodeURIComponent(event.queryStringParameters.query))
+    : undefined;
+
+  console.log("start key --->", startKey);
+
   try {
     const usersApiKeys = await dynamo.send(
       new QueryCommand({
@@ -49,8 +54,9 @@ export const handler = async (event: CustomAPIGatewayEventV2) => {
         ExpressionAttributeValues: {
           ":userId": userId,
         },
-        Limit: 10,
+        Limit: 9,
         ScanIndexForward: false,
+        ExclusiveStartKey: startKey,
         ProjectionExpression: "projectId, projectName, currentPlan, sub_status",
       })
     );
@@ -59,7 +65,10 @@ export const handler = async (event: CustomAPIGatewayEventV2) => {
 
     return {
       statusCode: 200,
-      body: JSON.stringify(usersApiKeys.Items),
+      body: JSON.stringify({
+        projects: usersApiKeys.Items,
+        nextKey: usersApiKeys.LastEvaluatedKey,
+      }),
       headers,
     };
   } catch (error: unknown) {

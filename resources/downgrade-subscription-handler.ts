@@ -73,17 +73,17 @@ export const handler = async (event: SQSEvent): Promise<SQSBatchResponse> => {
             })
           ),
 
-          //checks if they have the maxactive free projects
+          //checks if they have the max active free projects
           dynamo.send(
             new QueryCommand({
               TableName: tableName,
-              IndexName: "userIdIndex",
-              KeyConditionExpression: "userId = :userId",
+              IndexName: "userIdSubStatusIndex",
+              KeyConditionExpression:
+                "userId = :userId and sub_status = :status",
               ExpressionAttributeValues: {
                 ":userId": projectInfo.userId,
                 ":status": planTypeToStatus[PlanType.Free],
               },
-              FilterExpression: "sub_status = :status",
               Limit: maxActiveFreeProjects,
             })
           ),

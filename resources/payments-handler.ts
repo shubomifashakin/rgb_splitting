@@ -6,6 +6,7 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { APIGatewayClient } from "@aws-sdk/client-api-gateway";
 import {
   GetCommand,
+  QueryCommand,
   UpdateCommand,
   DynamoDBDocumentClient,
 } from "@aws-sdk/lib-dynamodb";
@@ -16,6 +17,7 @@ import {
   PlanType,
   PROJECT_STATUS,
   planTypeToStatus,
+  maxActiveFreeProjects,
 } from "../helpers/constants";
 import { transformZodError } from "../helpers/fns/transformZodError";
 import { CreateApiKeyAndAttachToUsagePlan } from "../helpers/fns/createApiKey";
@@ -81,6 +83,36 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
 
     //if the plan is free, no need for payments, create the api, attach to the free usage plan & shikenah
     if (planName === PlanType.Free) {
+      //checks if they already have too many free projects
+      const freeProjects = await dynamo.send(
+        new QueryCommand({
+          TableName: tableName,
+          IndexName: "userIdSubStatusIndex",
+          KeyConditionExpression: "userId = :userId and sub_status = :status",
+          ExpressionAttributeValues: {
+            ":userId": userId,
+            ":status": planTypeToStatus[PlanType.Free],
+          },
+          Limit: maxActiveFreeProjects,
+        })
+      );
+
+      console.log("Amount of free projects", freeProjects.Items?.length);
+
+      //if they have the max active free projects, stop them from creating a new one
+      if (
+        freeProjects.Items &&
+        freeProjects.Items.length >= maxActiveFreeProjects
+      ) {
+        return {
+          headers,
+          statusCode: 400,
+          body: JSON.stringify({
+            message: "You have reached the limit for free projects.",
+          }),
+        };
+      }
+
       if (!projectId) {
         //creates the project, the api key, attaches it to the correct usage plan & stores in db
         const res = await CreateApiKeyAndAttachToUsagePlan({
@@ -113,24 +145,13 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
         })
       );
 
+      //if the project was not found
       if (!existingProject.Item) {
-        //creates the api key, attaches it to the correct usage plan & stores in db
-        const res = await CreateApiKeyAndAttachToUsagePlan({
-          email,
-          userId,
-          tableName,
-          projectId: uuid(),
-          projectName,
-          cardExpiry: "",
-          cardToken: "",
-          dynamoClient,
-          apiGatewayClient,
-          currentPlan: planName,
-          usagePlanId: chosenUsagePlanId,
-          createdAt: new Date().toDateString(),
-        });
-
-        return res;
+        return {
+          headers,
+          statusCode: 404,
+          body: JSON.stringify({ message: "Project not found" }),
+        };
       }
 
       const projectInfo = existingProject.Item as {
@@ -175,7 +196,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
       narration: `Payment for project: ${data.projectName}`,
       amount: planDetails.amount,
       currency: planDetails.currency,
-      redirect_url: "http://localhost:3000/dashboard/new",
+      redirect_url: "http://localhost:3000/dashboard/new", //TODO: CHANEG TO ACTUAL DOMAIN
       customer: {
         email,
         name: fullName ? fullName : "",

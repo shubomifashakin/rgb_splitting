@@ -56,7 +56,7 @@ export async function validatePlan({
     );
   }
 
-  const trimmedAvailablePlans = JSON.parse(availableUsagePlans.SecretString!);
+  const trimmedAvailablePlans = JSON.parse(availableUsagePlans.SecretString);
 
   //validate the usage plans received
   const {
