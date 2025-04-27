@@ -21,7 +21,6 @@ export const planTypeToStatus = {
 
 export const maxProcessesInArray = 3;
 export const maxActiveFreeProjects = 3;
-export const processedImagesRouteVar = "image";
 
 export const default_grain = 0;
 export const default_normalized_channel = NormalizedChannels.REDGREENBLUE;

@@ -27,7 +27,7 @@ import { Queue } from "aws-cdk-lib/aws-sqs";
 import { Secret } from "aws-cdk-lib/aws-secretsmanager";
 import { SqsEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
 
-import { PlanType, processedImagesRouteVar } from "../helpers/constants";
+import { PlanType } from "../helpers/constants";
 
 ///did this to prevent a circular dependency issue betweent the lmbdas that neeed the secret name and the usage plans
 
@@ -929,7 +929,7 @@ export class RgbSplittingStack extends cdk.Stack {
 
     //route to get processed results -- USERS APPLICATION
     const getProcessedImagesRoute = projectInfoRoute
-      .addResource(processedImagesRouteVar)
+      .addResource("image")
       .addResource("{imageId}");
 
     generatePresignedUrlRoute.addMethod(

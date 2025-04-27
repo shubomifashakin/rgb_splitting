@@ -4,7 +4,6 @@ import { DynamoDBDocumentClient, GetCommand } from "@aws-sdk/lib-dynamodb";
 
 import { z } from "zod";
 
-import { processedImagesRouteVar } from "../helpers/constants";
 import { projectIdValidator } from "../helpers/schemaValidator/projectIdValidator";
 
 import { ProcessedImagesInfo } from "../types/processedResultInfo";
@@ -43,14 +42,12 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
   console.log("image Id", imageId);
   console.log("project Id", projectId);
 
-  const fullImageId = `${projectId}/${processedImagesRouteVar}/${imageId}`;
-
   try {
     const results = await dynamo.send(
       new GetCommand({
         TableName: processedResultsTable,
         Key: {
-          imageId: fullImageId,
+          imageId,
           projectId,
         },
         ProjectionExpression: "createdAt, originalImageUrl, results",

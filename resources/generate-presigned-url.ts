@@ -10,7 +10,6 @@ import {
   PlanType,
   defaultGrain,
   defaultNormalizedChannel,
-  processedImagesRouteVar,
 } from "../helpers/constants";
 import { transformZodError } from "../helpers/fns/transformZodError";
 import { processValidator } from "../helpers/schemaValidator/processValidator";
@@ -139,9 +138,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     };
   }
 
-  const imageKey = `${
-    projectData.projectId
-  }/${processedImagesRouteVar}/${uuid()}`;
+  const imageKey = uuid();
 
   try {
     const grainValue = JSON.stringify(grain);
