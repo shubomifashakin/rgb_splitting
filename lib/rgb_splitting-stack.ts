@@ -405,9 +405,27 @@ export class RgbSplittingStack extends cdk.Stack {
       {
         functionName: `${props.variables.projectPrefix}-get-processed-images-lambda`,
         description:
-          "This lambda is used to get the processed images for an image",
+          "This lambda is used to get the processed images for an image on the users application",
         runtime: Runtime.NODEJS_22_X,
         entry: "./resources/get-processed-images-handler.ts",
+        handler: "handler",
+        environment: {
+          REGION: this.region,
+          PROCESSED_IMAGES_TABLE_NAME: processedImagesTable.tableName,
+        },
+        timeout: cdk.Duration.seconds(10),
+      }
+    );
+
+    const getProcessedImagesWebLambda = new NodejsFunction(
+      this,
+      `${props.variables.projectPrefix}-get-processed-images-web-lambda`,
+      {
+        functionName: `${props.variables.projectPrefix}-get-processed-images-web-lambda`,
+        description:
+          "This lambda is used to get the processed images for an image on the web portal.",
+        runtime: Runtime.NODEJS_22_X,
+        entry: "./resources/get-processed-images-web-handler.ts",
         handler: "handler",
         environment: {
           REGION: this.region,
@@ -932,6 +950,12 @@ export class RgbSplittingStack extends cdk.Stack {
       .addResource("image")
       .addResource("{imageId}");
 
+    //route to get processed results -- WEB APPLICATION
+    const getProcessedImagesWebRoute = projectInfoRoute
+      .addResource("web")
+      .addResource("image")
+      .addResource("{imageId}");
+
     generatePresignedUrlRoute.addMethod(
       HttpMethod.POST,
       new LambdaIntegration(generatePresignedUrlLambda),
@@ -990,6 +1014,15 @@ export class RgbSplittingStack extends cdk.Stack {
       HttpMethod.GET,
       new LambdaIntegration(getProcessedImagesLambda),
       { apiKeyRequired: true }
+    );
+
+    getProcessedImagesWebRoute.addMethod(
+      HttpMethod.GET,
+      new LambdaIntegration(getProcessedImagesWebLambda),
+      {
+        authorizer: userAuthorizer,
+        authorizationType: AuthorizationType.CUSTOM,
+      }
     );
 
     cancelSubscriptionRoute.addMethod(
@@ -1215,20 +1248,21 @@ export class RgbSplittingStack extends cdk.Stack {
     projectsTable.grantReadWriteData(webHookLambda);
     projectsTable.grantReadWriteData(resubscribeLambda);
     projectsTable.grantReadWriteData(triggerChargeLambda);
-    projectsTable.grantReadData(generatePresignedUrlLambda);
+    projectsTable.grantReadWriteData(deleteProjectLambda);
     projectsTable.grantReadWriteData(cancelSubscriptionLambda);
+    projectsTable.grantReadWriteData(downgradeSubscriptionLambda);
 
     projectsTable.grantWriteData(splittingLambda);
     projectsTable.grantWriteData(updateProjectNameLambda);
+    projectsTable.grantReadData(generatePresignedUrlLambda);
 
     projectsTable.grantReadData(getProjectInfoLambda);
     projectsTable.grantReadData(getUsersProjectsLambda);
-    projectsTable.grantReadWriteData(deleteProjectLambda);
-
-    projectsTable.grantReadWriteData(downgradeSubscriptionLambda);
 
     processedImagesTable.grantWriteData(splittingLambda);
+
     processedImagesTable.grantReadData(getProjectInfoLambda);
     processedImagesTable.grantReadData(getProcessedImagesLambda);
+    processedImagesTable.grantReadData(getProcessedImagesWebLambda);
   }
 }

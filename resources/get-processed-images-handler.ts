@@ -20,7 +20,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
   if (!pathParameters) {
     return {
       statusCode: 400,
-      body: JSON.stringify({ message: "Missing path parameters" }),
+      body: JSON.stringify({ message: "Bad Request" }),
     };
   }
 
