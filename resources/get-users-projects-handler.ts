@@ -54,7 +54,7 @@ export const handler = async (event: CustomAPIGatewayEventV2) => {
         ExpressionAttributeValues: {
           ":userId": userId,
         },
-        Limit: 9,
+        Limit: 12,
         ScanIndexForward: false,
         ExclusiveStartKey: startKey,
         ProjectionExpression: "projectId, projectName, currentPlan, sub_status",

@@ -92,7 +92,6 @@ export async function handler(event: CustomAPIGatewayEventV2) {
         "currentPlan, nextPaymentDate, currentBillingDate, sub_status, projectName";
     }
 
-    //TODO: PAGINATE THIS
     if (searchParamsData.field !== "gallery") {
       const item = await dynamo.send(
         new QueryCommand({
@@ -120,6 +119,9 @@ export async function handler(event: CustomAPIGatewayEventV2) {
       };
     }
 
+    console.log(event.queryStringParameters?.query);
+
+    //TODO: PAGINATE THIS
     const item = await dynamo.send(
       new QueryCommand({
         TableName: processedImagesTableName,
@@ -128,7 +130,11 @@ export async function handler(event: CustomAPIGatewayEventV2) {
           ":projectId": data.projectId,
         },
         ProjectionExpression: "originalImageUrl, createdAt, imageId",
-        Limit: 6,
+        Limit: 12,
+        ScanIndexForward: false,
+        ExclusiveStartKey: event.queryStringParameters?.query
+          ? JSON.parse(decodeURIComponent(event.queryStringParameters.query))
+          : undefined,
       })
     );
 
@@ -141,7 +147,10 @@ export async function handler(event: CustomAPIGatewayEventV2) {
     return {
       headers,
       statusCode: 200,
-      body: JSON.stringify({ projectInfo: item.Items }),
+      body: JSON.stringify({
+        projectInfo: item.Items,
+        nextKey: item.LastEvaluatedKey,
+      }),
     };
   } catch (error) {
     console.error("Failed to get project info", error);
