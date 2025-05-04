@@ -515,8 +515,9 @@ export class RgbSplittingStack extends cdk.Stack {
 
     downgradeSubscriptionLambda.addEventSource(
       new SqsEventSource(downgradeSubscriptionQueue, {
-        batchSize: 10,
+        batchSize: 1000,
         reportBatchItemFailures: true,
+        maxBatchingWindow: cdk.Duration.minutes(2.5), //wait 2.5 minutes before sending the batch to the lambda
       })
     );
 
