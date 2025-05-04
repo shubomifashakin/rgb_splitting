@@ -146,11 +146,11 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
 
     const { url, fields } = await createPresignedPost(s3, {
       Bucket: s3Bucket,
-      Key: imageKey,
+      Key: `${imageKey}` + "/${filename}", //this would use the actual file name so the resulting key would be uuid/the actual name of the file
       Conditions: [
-        { key: imageKey },
         { bucket: s3Bucket },
 
+        ["starts-with", "$key", `${imageKey}`],
         ["starts-with", "$Content-Type", "image/"],
         [
           "content-length-range",

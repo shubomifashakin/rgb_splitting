@@ -37,12 +37,14 @@ export async function processImage({
   imageData,
   bucketName,
   originalImageKey,
+  format = "jpg",
 }: {
   grains: grainType;
   bucketName: string;
   imageData: ImageData;
   channels: ChannelType;
   originalImageKey: string;
+  format?: "jpg" | "png";
 }) {
   let processedImages: ImageData[] = [];
   let processedInfo: {
@@ -66,6 +68,7 @@ export async function processImage({
 
           const { url, key } = formImageKeyAndUrl({
             grain,
+            format,
             channel,
             bucketName,
             originalImageKey,
@@ -103,6 +106,7 @@ export async function processImage({
           const { url, key } = formImageKeyAndUrl({
             grain,
             channel,
+            format,
             bucketName,
             originalImageKey,
           });
@@ -143,6 +147,7 @@ export async function processImage({
 
           const { url, key } = formImageKeyAndUrl({
             grain,
+            format,
             channel,
             bucketName,
             originalImageKey,
@@ -178,6 +183,7 @@ export async function processImage({
 
           const { url, key } = formImageKeyAndUrl({
             grain,
+            format,
             channel,
             bucketName,
             originalImageKey,
@@ -213,6 +219,7 @@ export async function processImage({
 
           const { url, key } = formImageKeyAndUrl({
             grain,
+            format,
             channel,
             bucketName,
             originalImageKey,
@@ -242,14 +249,16 @@ function formImageKeyAndUrl({
   channel,
   bucketName,
   originalImageKey,
+  format = "jpg",
 }: {
   grain: number;
   bucketName: string;
   originalImageKey: string;
   channel: NormalizedChannels;
+  format?: "jpg" | "png";
 }) {
   const key = `${originalImageKey}/${channel}-${grain}`;
-  const url = `https://${bucketName}.s3.us-east-1.amazonaws.com/${key}`;
+  const url = `https://${bucketName}.s3.us-east-1.amazonaws.com/${key}.${format}`;
 
   return { key, url };
 }
