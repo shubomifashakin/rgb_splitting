@@ -34,7 +34,10 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
   if (!success) {
     console.error("Failed to validate image key --->", error.issues);
 
-    return { statusCode: 400, body: "Bad Request - Invalid image key" };
+    return {
+      statusCode: 400,
+      body: JSON.stringify({ message: "Bad Request - Invalid image key" }),
+    };
   }
 
   const { imageId, projectId } = data;

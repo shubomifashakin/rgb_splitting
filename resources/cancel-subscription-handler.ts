@@ -36,7 +36,7 @@ export const handler = async (event: AuthorizedApiGatewayEvent) => {
     return {
       headers,
       statusCode: 400,
-      body: JSON.stringify({ error: "Unauthorized" }),
+      body: JSON.stringify({ message: "Unauthorized" }),
     };
   }
 
@@ -74,7 +74,7 @@ export const handler = async (event: AuthorizedApiGatewayEvent) => {
       return {
         headers,
         statusCode: 404,
-        body: JSON.stringify({ error: "Project not found" }),
+        body: JSON.stringify({ message: "Project not found" }),
       };
     }
 

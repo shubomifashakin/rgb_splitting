@@ -48,7 +48,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     return {
       headers,
       statusCode: 400,
-      body: JSON.stringify({ error: "Bad Request - No body" }),
+      body: JSON.stringify({ message: "Bad Request - No body" }),
     };
   }
 

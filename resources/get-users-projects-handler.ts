@@ -21,7 +21,7 @@ export const handler = async (event: AuthorizedApiGatewayEvent) => {
   if (!event.requestContext.authorizer) {
     return {
       statusCode: 400,
-      body: JSON.stringify({ error: "Unauthorized" }),
+      body: JSON.stringify({ message: "Unauthorized" }),
       headers,
     };
   }

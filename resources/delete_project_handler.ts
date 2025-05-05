@@ -40,7 +40,7 @@ export async function handler(event: AuthorizedApiGatewayEvent) {
       return {
         headers,
         statusCode: 400,
-        body: JSON.stringify({ error: "Unauthorized" }),
+        body: JSON.stringify({ message: "Unauthorized" }),
       };
     }
 
@@ -79,7 +79,7 @@ export async function handler(event: AuthorizedApiGatewayEvent) {
       return {
         headers,
         statusCode: 400,
-        body: JSON.stringify({ error: "Project not found" }),
+        body: JSON.stringify({ message: "Project not found" }),
       };
     }
 
