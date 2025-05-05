@@ -1,8 +1,3 @@
-import {
-  APIGatewayEventRequestContextV2,
-  APIGatewayProxyEventV2,
-} from "aws-lambda";
-
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import {
   DeleteCommand,
@@ -19,6 +14,7 @@ import {
   DeleteApiKeyCommand,
 } from "@aws-sdk/client-api-gateway";
 import { ApiKeyInfo } from "../types/apiKeyInfo";
+import { AuthorizedApiGatewayEvent } from "../types/AuthorizedApiGateway";
 
 const region = process.env.REGION;
 const tableName = process.env.TABLE_NAME;
@@ -28,15 +24,7 @@ const dynamo = DynamoDBDocumentClient.from(client);
 
 const apiGatewayClient = new APIGatewayClient({ region });
 
-interface CustomAPIGatewayEventV2 extends APIGatewayProxyEventV2 {
-  requestContext: APIGatewayEventRequestContextV2 & {
-    authorizer?: {
-      principalId?: string;
-    };
-  };
-}
-
-export async function handler(event: CustomAPIGatewayEventV2) {
+export async function handler(event: AuthorizedApiGatewayEvent) {
   try {
     const headers = {
       "Access-Control-Allow-Origin": "*",

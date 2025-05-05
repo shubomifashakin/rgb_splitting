@@ -1,14 +1,10 @@
-import {
-  APIGatewayProxyEventV2,
-  APIGatewayEventRequestContextV2,
-} from "aws-lambda";
-
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
 
 import { z } from "zod";
 
 import { transformZodError } from "../helpers/fns/transformZodError";
+import { AuthorizedApiGatewayEvent } from "../types/AuthorizedApiGateway";
 
 const region = process.env.REGION;
 const tableName = process.env.TABLE_NAME;
@@ -17,15 +13,7 @@ const processedImagesTableName = process.env.PROCESSED_IMAGES_TABLE_NAME;
 const client = new DynamoDBClient({ region });
 const dynamo = DynamoDBDocumentClient.from(client);
 
-interface CustomAPIGatewayEventV2 extends APIGatewayProxyEventV2 {
-  requestContext: APIGatewayEventRequestContextV2 & {
-    authorizer?: {
-      principalId?: string;
-    };
-  };
-}
-
-export async function handler(event: CustomAPIGatewayEventV2) {
+export async function handler(event: AuthorizedApiGatewayEvent) {
   try {
     const headers = {
       "Access-Control-Allow-Origin": "*",

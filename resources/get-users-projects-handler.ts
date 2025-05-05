@@ -1,10 +1,7 @@
-import {
-  APIGatewayProxyEventV2,
-  APIGatewayEventRequestContextV2,
-} from "aws-lambda";
-
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
+
+import { AuthorizedApiGatewayEvent } from "../types/AuthorizedApiGateway";
 
 const region = process.env.REGION;
 const tableName = process.env.TABLE_NAME;
@@ -12,15 +9,7 @@ const tableName = process.env.TABLE_NAME;
 const client = new DynamoDBClient({ region });
 const dynamo = DynamoDBDocumentClient.from(client);
 
-interface CustomAPIGatewayEventV2 extends APIGatewayProxyEventV2 {
-  requestContext: APIGatewayEventRequestContextV2 & {
-    authorizer?: {
-      principalId?: string;
-    };
-  };
-}
-
-export const handler = async (event: CustomAPIGatewayEventV2) => {
+export const handler = async (event: AuthorizedApiGatewayEvent) => {
   console.log(event);
 
   const headers = {

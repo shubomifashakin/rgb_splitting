@@ -1,8 +1,3 @@
-import {
-  APIGatewayProxyEventV2,
-  APIGatewayEventRequestContextV2,
-} from "aws-lambda";
-
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import {
   GetCommand,
@@ -13,6 +8,7 @@ import {
 import { APIGatewayClient } from "@aws-sdk/client-api-gateway";
 
 import { ApiKeyInfo } from "../types/apiKeyInfo";
+import { AuthorizedApiGatewayEvent } from "../types/AuthorizedApiGateway";
 
 import { PROJECT_STATUS } from "../helpers/constants";
 import { transformZodError } from "../helpers/fns/transformZodError";
@@ -27,15 +23,7 @@ const dynamo = DynamoDBDocumentClient.from(client);
 
 const apiGatewayClient = new APIGatewayClient({ region });
 
-interface CustomAPIGatewayEventV2 extends APIGatewayProxyEventV2 {
-  requestContext: APIGatewayEventRequestContextV2 & {
-    authorizer?: {
-      principalId?: string;
-    };
-  };
-}
-
-export const handler = async (event: CustomAPIGatewayEventV2) => {
+export const handler = async (event: AuthorizedApiGatewayEvent) => {
   const headers = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "OPTIONS, POST, GET",
