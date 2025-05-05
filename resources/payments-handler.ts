@@ -8,6 +8,7 @@ import {
   GetCommand,
   QueryCommand,
   UpdateCommand,
+  GetCommandOutput,
   DynamoDBDocumentClient,
 } from "@aws-sdk/lib-dynamodb";
 
@@ -72,6 +73,32 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
   const { planName, email, userId, fullName, projectId, projectName } = data;
 
   try {
+    let existingProject: GetCommandOutput;
+
+    //if there is a projectId, check if the project actually exists
+    if (projectId) {
+      //check if the project exists
+      existingProject = await dynamoClient.send(
+        new GetCommand({
+          TableName: tableName,
+          Key: {
+            userId,
+            projectId,
+          },
+          ProjectionExpression: "apiKeyInfo, sub_status",
+        })
+      );
+
+      //if the project does not exist
+      if (!existingProject.Item) {
+        return {
+          headers,
+          statusCode: 404,
+          body: JSON.stringify({ message: "Project Not Found" }),
+        };
+      }
+    }
+
     const { planDetails, chosenUsagePlanId, paymentGatewaySecret } =
       await validatePlan({
         region,
@@ -113,6 +140,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
         };
       }
 
+      //if there is no projectId, create a new project
       if (!projectId) {
         //creates the project, the api key, attaches it to the correct usage plan & stores in db
         const res = await CreateApiKeyAndAttachToUsagePlan({
@@ -133,28 +161,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
         return res;
       }
 
-      //check if the project exists
-      const existingProject = await dynamoClient.send(
-        new GetCommand({
-          TableName: tableName,
-          Key: {
-            userId,
-            projectId,
-          },
-          ProjectionExpression: "apiKeyInfo, sub_status",
-        })
-      );
-
-      //if the project was not found
-      if (!existingProject.Item) {
-        return {
-          headers,
-          statusCode: 404,
-          body: JSON.stringify({ message: "Project not found" }),
-        };
-      }
-
-      const projectInfo = existingProject.Item as {
+      const projectInfo = existingProject!.Item as {
         apiKeyInfo: ApiKeyInfo;
         sub_status: PROJECT_STATUS;
       };
@@ -202,7 +209,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
         name: fullName ? fullName : "",
       },
       customizations: {
-        title: "Rgbreak",
+        title: "RGBreak",
       },
       meta: {
         userId,
