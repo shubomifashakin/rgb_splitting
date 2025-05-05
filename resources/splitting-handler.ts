@@ -118,6 +118,7 @@ export const handler: Handler = async (event: S3Event) => {
       new PutCommand({
         TableName: processedResultTable,
         Item: {
+          userId: data.user_id,
           results: processedImages,
           imageId: originalImageKey.split("/")[0],
           projectId: data.project_id,

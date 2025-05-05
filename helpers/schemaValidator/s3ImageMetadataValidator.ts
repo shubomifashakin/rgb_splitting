@@ -3,9 +3,12 @@ import { z } from "zod";
 import { grainValidator } from "./processValidator";
 import { projectIdValidator } from "./projectIdValidator";
 import { normalizedChannelValidator } from "./normalizedChannelsValidator";
+import { userIdValidator } from "./newPaymentRequestBodyValidator";
 
 export const s3ImageMetadataValidator = z.object({
   project_id: projectIdValidator,
+
+  user_id: userIdValidator,
 
   grains: z
     .string()

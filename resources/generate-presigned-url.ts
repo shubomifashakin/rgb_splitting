@@ -168,6 +168,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
       Fields: {
         "x-amz-meta-grains": grainValue,
         "x-amz-meta-channels": channelsValue,
+        "x-amz-meta-user_id": projectData.userId,
         "x-amz-meta-project_id": projectData.projectId,
       },
 

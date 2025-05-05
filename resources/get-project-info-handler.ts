@@ -96,8 +96,9 @@ export async function handler(event: CustomAPIGatewayEventV2) {
       const item = await dynamo.send(
         new QueryCommand({
           TableName: tableName,
-          KeyConditionExpression: "projectId = :projectId",
+          KeyConditionExpression: "projectId = :projectId AND userId = :userId",
           ExpressionAttributeValues: {
+            ":userId": userId,
             ":projectId": data.projectId,
           },
           ProjectionExpression: projectionExpression,
@@ -127,6 +128,7 @@ export async function handler(event: CustomAPIGatewayEventV2) {
         TableName: processedImagesTableName,
         KeyConditionExpression: "projectId = :projectId",
         ExpressionAttributeValues: {
+          ":userId": userId,
           ":projectId": data.projectId,
         },
         ProjectionExpression: "originalImageUrl, createdAt, imageId",
@@ -135,6 +137,7 @@ export async function handler(event: CustomAPIGatewayEventV2) {
         ExclusiveStartKey: event.queryStringParameters?.query
           ? JSON.parse(decodeURIComponent(event.queryStringParameters.query))
           : undefined,
+        FilterExpression: "userId = :userId",
       })
     );
 
