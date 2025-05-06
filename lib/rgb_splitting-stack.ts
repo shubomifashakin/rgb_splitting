@@ -3,20 +3,18 @@ import { Construct } from "constructs";
 import * as cdk from "aws-cdk-lib";
 import { LayerVersion, RecursiveLoop, Runtime } from "aws-cdk-lib/aws-lambda";
 import {
-  BlockPublicAccess,
   Bucket,
   EventType,
   HttpMethods,
+  BlockPublicAccess,
 } from "aws-cdk-lib/aws-s3";
 import { NodejsFunction } from "aws-cdk-lib/aws-lambda-nodejs";
 import {
   AuthorizationType,
   Cors,
-  Deployment,
   LambdaIntegration,
   Period,
   RestApi,
-  Stage,
   TokenAuthorizer,
   UsagePlan,
 } from "aws-cdk-lib/aws-apigateway";
@@ -25,69 +23,84 @@ import { AttributeType, Table } from "aws-cdk-lib/aws-dynamodb";
 import { LambdaDestination } from "aws-cdk-lib/aws-s3-notifications";
 import { PolicyStatement, Role, ServicePrincipal } from "aws-cdk-lib/aws-iam";
 
-import * as dotenv from "dotenv";
 import { Queue } from "aws-cdk-lib/aws-sqs";
 import { Secret } from "aws-cdk-lib/aws-secretsmanager";
 import { SqsEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
 
-import { PlanType, processedImagesRouteVar } from "../helpers/constants";
-
-dotenv.config();
-
-const projectPrefix = "rgb-splitting";
-
-const region = process.env.REGION!;
-const paymentGatewayUrl = process.env.PAYMENT_GATEWAY_URL!;
-const alarmSubscriptionEmail = process.env.SUBSCRIPTION_EMAIL!;
-
-const paymentSecretName = process.env.PAYMENT_SECRET_NAME!;
-const webhookSecretName = process.env.WEBHOOK_SECRET_NAME!;
-const clerkJwtSecretName = process.env.CLERK_JWT_SECRET_NAME!;
-const maxPlanSizesSecretName = process.env.MAX_PLAN_SIZES_SECRET_NAME!;
+import { PlanType } from "../helpers/constants";
 
 ///did this to prevent a circular dependency issue betweent the lmbdas that neeed the secret name and the usage plans
-const availablePlansSecretName = `${projectPrefix}-all-usage-plans-secret`;
+
+interface RgbStackProps extends cdk.StackProps {
+  variables: {
+    stage: "dev" | "prod";
+
+    projectPrefix: string;
+    paymentSecretName: string;
+    paymentGatewayUrl: string;
+    webhookSecretName: string;
+    clerkJwtSecretName: string;
+    alarmSubscriptionEmail: string;
+  };
+}
 
 export class RgbSplittingStack extends cdk.Stack {
-  constructor(scope: Construct, id: string, props: cdk.StackProps) {
+  constructor(scope: Construct, id: string, props: RgbStackProps) {
     super(scope, id, {
       ...props,
-      env: {
-        region,
-      },
     });
 
-    const s3Bucket = new Bucket(this, `${projectPrefix}-bucket-sh`, {
-      versioned: true,
-      publicReadAccess: true,
-      bucketName: "rgb-split-bucket-sh",
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
-      blockPublicAccess: BlockPublicAccess.BLOCK_ACLS,
-      cors: [
-        {
-          allowedHeaders: ["*"],
-          allowedMethods: [HttpMethods.POST, HttpMethods.GET, HttpMethods.PUT],
-          allowedOrigins: Cors.ALL_ORIGINS,
-          exposedHeaders: ["ETAG"],
+    const availablePlansSecretName = `${props.variables.projectPrefix}-all-usage-plans-secret`;
+
+    const s3Bucket = new Bucket(
+      this,
+      `${props.variables.projectPrefix}-bucket-sh`,
+      {
+        versioned: false,
+        publicReadAccess: true,
+        bucketName: `${props.variables.projectPrefix}-bucket-sh`.toLowerCase(),
+        removalPolicy:
+          props.variables.stage === "dev"
+            ? cdk.RemovalPolicy.DESTROY
+            : cdk.RemovalPolicy.RETAIN,
+        blockPublicAccess: BlockPublicAccess.BLOCK_ACLS,
+        cors: [
+          {
+            allowedHeaders: ["*"],
+            allowedMethods: [
+              HttpMethods.POST,
+              HttpMethods.GET,
+              HttpMethods.PUT,
+            ],
+            allowedOrigins: Cors.ALL_ORIGINS,
+            exposedHeaders: ["ETAG"],
+          },
+        ],
+      }
+    );
+
+    const projectsTable = new Table(
+      this,
+      `${props.variables.projectPrefix}-table-sh`,
+      {
+        tableName: `${props.variables.projectPrefix}-table-sh`,
+        partitionKey: {
+          name: "projectId",
+          type: AttributeType.STRING,
         },
-      ],
-    });
-
-    const projectsTable = new Table(this, `${projectPrefix}-table-sh`, {
-      tableName: `${projectPrefix}-table-sh`,
-      partitionKey: {
-        name: "id",
-        type: AttributeType.STRING,
-      },
-      sortKey: {
-        name: "userId",
-        type: AttributeType.STRING,
-      },
-      pointInTimeRecoverySpecification: {
-        pointInTimeRecoveryEnabled: true,
-      },
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
-    });
+        sortKey: {
+          name: "userId",
+          type: AttributeType.STRING,
+        },
+        pointInTimeRecoverySpecification: {
+          pointInTimeRecoveryEnabled: true,
+        },
+        removalPolicy:
+          props.variables.stage === "dev"
+            ? cdk.RemovalPolicy.DESTROY
+            : cdk.RemovalPolicy.RETAIN,
+      }
+    );
 
     projectsTable.addGlobalSecondaryIndex({
       indexName: "expiredSubscriptionIndex",
@@ -108,6 +121,10 @@ export class RgbSplittingStack extends cdk.Stack {
         name: "userId",
         type: AttributeType.STRING,
       },
+      sortKey: {
+        name: "createdAt",
+        type: AttributeType.NUMBER,
+      },
     });
 
     projectsTable.addGlobalSecondaryIndex({
@@ -118,47 +135,63 @@ export class RgbSplittingStack extends cdk.Stack {
       },
     });
 
+    projectsTable.addGlobalSecondaryIndex({
+      indexName: "userIdSubStatusIndex",
+      partitionKey: {
+        name: "userId",
+        type: AttributeType.STRING,
+      },
+
+      sortKey: {
+        name: "sub_status",
+        type: AttributeType.STRING,
+      },
+    });
+
     const processedImagesTable = new Table(
       this,
-      `${projectPrefix}-processed-images-table-sh-2`,
+      `${props.variables.projectPrefix}-processed-images-table`,
       {
-        tableName: `${projectPrefix}-processed-images-table-sh-2`,
+        tableName: `${props.variables.projectPrefix}-processed-images-table`,
         partitionKey: {
-          name: "imageId",
+          name: "projectId",
           type: AttributeType.STRING,
         },
         sortKey: {
-          name: "projectId",
+          name: "imageId",
           type: AttributeType.STRING,
         },
         pointInTimeRecoverySpecification: {
           pointInTimeRecoveryEnabled: true,
         },
-        removalPolicy: cdk.RemovalPolicy.DESTROY,
+        removalPolicy:
+          props.variables.stage === "dev"
+            ? cdk.RemovalPolicy.DESTROY
+            : cdk.RemovalPolicy.RETAIN,
       }
     );
 
     //this queue is used to store messages that failed to be downgraded
-    const cancelSubscriptionDeadLetterQueue = new Queue(
+    const downgradeSubscriptionDLQ = new Queue(
       this,
-      `${projectPrefix}-cancel-subscription-dlq`,
+      `${props.variables.projectPrefix}-downgrade-subscription-dlq`,
       {
-        queueName: `${projectPrefix}-cancel-subscription-dlq`,
+        queueName: `${props.variables.projectPrefix}-downgrade-subscription-dlq`,
         retentionPeriod: cdk.Duration.days(14),
       }
     );
 
     //resubscriptions that failed are sent to this queue so they can be downgraded to the free plan
-    const cancelSubscriptionQueue = new Queue(
+    const downgradeSubscriptionQueue = new Queue(
       this,
-      `${projectPrefix}-cancel-subscription-queue`,
+      `${props.variables.projectPrefix}-downgrade-subscription-queue`,
       {
-        queueName: `${projectPrefix}-cancel-subscription-queue`,
+        queueName: `${props.variables.projectPrefix}-downgrade-subscription-queue`,
         retentionPeriod: cdk.Duration.days(4),
-        visibilityTimeout: cdk.Duration.minutes(1.2),
+        visibilityTimeout: cdk.Duration.minutes(1.2), //once the message is sent out, if the message is not processed before this timer ends, it would reappppear
         deadLetterQueue: {
           maxReceiveCount: 2,
-          queue: cancelSubscriptionDeadLetterQueue,
+          queue: downgradeSubscriptionDLQ,
         },
         deliveryDelay: cdk.Duration.seconds(20),
         receiveMessageWaitTime: cdk.Duration.seconds(20),
@@ -167,18 +200,18 @@ export class RgbSplittingStack extends cdk.Stack {
 
     const resubscriptionDeadLetterQueue = new Queue(
       this,
-      `${projectPrefix}-resubscription-dlq`,
+      `${props.variables.projectPrefix}-resubscription-dlq`,
       {
-        queueName: `${projectPrefix}-resubscription-dlq`,
+        queueName: `${props.variables.projectPrefix}-resubscription-dlq`,
         retentionPeriod: cdk.Duration.days(14),
       }
     );
 
     const resubscribeSubscriptionQueue = new Queue(
       this,
-      `${projectPrefix}-resubscribe-subscription-queue`,
+      `${props.variables.projectPrefix}-resubscribe-subscription-queue`,
       {
-        queueName: `${projectPrefix}-resubscribe-subscription-queue`,
+        queueName: `${props.variables.projectPrefix}-resubscribe-subscription-queue`,
         retentionPeriod: cdk.Duration.days(4),
         visibilityTimeout: cdk.Duration.minutes(3),
         deadLetterQueue: {
@@ -198,9 +231,9 @@ export class RgbSplittingStack extends cdk.Stack {
 
     const splittingLambda = new NodejsFunction(
       this,
-      `${projectPrefix}-lambda-sh`,
+      `${props.variables.projectPrefix}-lambda-sh`,
       {
-        functionName: `${projectPrefix}-lambda-sh`,
+        functionName: `${props.variables.projectPrefix}-lambda-sh`,
         description:
           "this lambda is used for processing the image that was uploaded to s3",
         timeout: cdk.Duration.minutes(1.5),
@@ -228,9 +261,9 @@ export class RgbSplittingStack extends cdk.Stack {
     //lambda used to generate the presigned urls
     const generatePresignedUrlLambda = new NodejsFunction(
       this,
-      `${projectPrefix}-generate-presigned-url-lambda`,
+      `${props.variables.projectPrefix}-generate-presigned-url-lambda`,
       {
-        functionName: `${projectPrefix}-generate-presigned-url-lambda`,
+        functionName: `${props.variables.projectPrefix}-generate-presigned-url-lambda`,
         description:
           "This lambda generates presigned urls to users with valid apikeys",
         timeout: cdk.Duration.seconds(10),
@@ -239,7 +272,6 @@ export class RgbSplittingStack extends cdk.Stack {
           REGION: this.region,
           BUCKET_NAME: s3Bucket.bucketName,
           TABLE_NAME: projectsTable.tableName,
-          MAX_PLAN_SIZES_SECRET_NAME: maxPlanSizesSecretName,
         },
         entry: "./resources/generate-presigned-url.ts",
         handler: "handler",
@@ -249,9 +281,9 @@ export class RgbSplittingStack extends cdk.Stack {
     //used to verify webhooks,
     const webHookLambda = new NodejsFunction(
       this,
-      `${projectPrefix}-webHook-Lambda`,
+      `${props.variables.projectPrefix}-webHook-Lambda`,
       {
-        functionName: `${projectPrefix}-webhook-lambda`,
+        functionName: `${props.variables.projectPrefix}-webhook-lambda`,
         description:
           "This lambda receives webhook events from our payment gateway",
         runtime: Runtime.NODEJS_22_X,
@@ -260,24 +292,24 @@ export class RgbSplittingStack extends cdk.Stack {
         environment: {
           REGION: this.region,
           TABLE_NAME: projectsTable.tableName,
-          PAYMENT_SECRET_NAME: paymentSecretName,
-          WEBHOOK_SECRET_NAME: webhookSecretName,
-          PAYMENT_GATEWAY_URL: paymentGatewayUrl,
+          PAYMENT_SECRET_NAME: props.variables.paymentSecretName,
+          WEBHOOK_SECRET_NAME: props.variables.webhookSecretName,
+          PAYMENT_GATEWAY_URL: props.variables.paymentGatewayUrl,
         },
         timeout: cdk.Duration.seconds(20),
       }
     );
 
-    //used to get all the api keys owned by a particular user
-    const getUsersApiKeysLambda = new NodejsFunction(
+    //used to get all the projects the user has created
+    const getUsersProjectsLambda = new NodejsFunction(
       this,
-      `${projectPrefix}-get-all-user-api-keys-lambda`,
+      `${props.variables.projectPrefix}-get-users-projects-lambda`,
       {
-        functionName: `${projectPrefix}-get-all-user-api-keys-lambda`,
+        functionName: `${props.variables.projectPrefix}-get-users-projects-lambda`,
         description:
-          "This lambda is used for getting all the api keys for a particula user",
+          "This lambda is used for getting all the projects for a user",
         runtime: Runtime.NODEJS_22_X,
-        entry: "./resources/get-all-user-api-keys-handler.ts",
+        entry: "./resources/get-users-projects-handler.ts",
         handler: "handler",
         environment: {
           REGION: this.region,
@@ -289,18 +321,19 @@ export class RgbSplittingStack extends cdk.Stack {
 
     const triggerChargeLambda = new NodejsFunction(
       this,
-      `${projectPrefix}-Payments-Lambda`,
+      `${props.variables.projectPrefix}-Payments-Lambda`,
       {
-        functionName: `${projectPrefix}-payments-lambda`,
+        functionName: `${props.variables.projectPrefix}-payments-lambda`,
         description: "This lambda is used to handle subcription payments.",
         runtime: Runtime.NODEJS_22_X,
         entry: "./resources/payments-handler.ts",
         handler: "handler",
         environment: {
           REGION: this.region,
-          PAYMENT_SECRET_NAME: paymentSecretName,
+          PAYMENT_SECRET_NAME: props.variables.paymentSecretName,
           AVAILABLE_PLANS_SECRET_NAME: availablePlansSecretName,
-          PAYMENT_GATEWAY_URL: paymentGatewayUrl,
+          PAYMENT_GATEWAY_URL: props.variables.paymentGatewayUrl,
+          TABLE_NAME: projectsTable.tableName,
         },
         timeout: cdk.Duration.seconds(15),
       }
@@ -308,25 +341,25 @@ export class RgbSplittingStack extends cdk.Stack {
 
     const userAuthorizerLambda = new NodejsFunction(
       this,
-      `${projectPrefix}-user-authorizer-lambda`,
+      `${props.variables.projectPrefix}-user-authorizer-lambda`,
       {
-        functionName: `${projectPrefix}-user-authorizer-lambda`,
+        functionName: `${props.variables.projectPrefix}-user-authorizer-lambda`,
         description: "This lambda validates the user",
         runtime: Runtime.NODEJS_22_X,
         entry: "./resources/authorizer-lambda-handler.ts",
         handler: "handler",
         timeout: cdk.Duration.seconds(10),
         environment: {
-          CLERK_JWT_SECRET_NAME: clerkJwtSecretName,
+          CLERK_JWT_SECRET_NAME: props.variables.clerkJwtSecretName,
         },
       }
     );
 
     const resubscribeLambda = new NodejsFunction(
       this,
-      `${projectPrefix}-resubscribe-lambda`,
+      `${props.variables.projectPrefix}-resubscribe-lambda`,
       {
-        functionName: `${projectPrefix}-resubscribe-lambda`,
+        functionName: `${props.variables.projectPrefix}-resubscribe-lambda`,
         description:
           "This lambda is used for resubscribing all users with expired subscriptions to their plan. It runs every week, triggered by the event bridge rule",
         runtime: Runtime.NODEJS_22_X,
@@ -335,26 +368,27 @@ export class RgbSplittingStack extends cdk.Stack {
         environment: {
           REGION: this.region,
           TABLE_NAME: projectsTable.tableName,
-          PAYMENT_GATEWAY_URL: paymentGatewayUrl,
-          PAYMENT_SECRET_NAME: paymentSecretName,
+          PAYMENT_GATEWAY_URL: props.variables.paymentGatewayUrl,
+          PAYMENT_SECRET_NAME: props.variables.paymentSecretName,
           AVAILABLE_PLANS_SECRET_NAME: availablePlansSecretName,
           RESUBSCRIBE_QUEUE_URL: resubscribeSubscriptionQueue.queueUrl,
-          CANCEL_SUBSCRIPTION_QUEUE_URL: cancelSubscriptionQueue.queueUrl,
+          DOWNGRADE_SUBSCRIPTION_QUEUE_URL: downgradeSubscriptionQueue.queueUrl,
         },
         timeout: cdk.Duration.minutes(2),
         recursiveLoop: RecursiveLoop.ALLOW, // got an email from aws thar my function was terminated, so i added this, the resubscribe lambda uses a recursive design
+        memorySize: 1536,
       }
     );
 
-    const cancelSubscriptionLambda = new NodejsFunction(
+    const downgradeSubscriptionLambda = new NodejsFunction(
       this,
-      `${projectPrefix}-cancel-subscription-queue-lambda`,
+      `${props.variables.projectPrefix}-downgrade-subscription-queue-lambda`,
       {
-        functionName: `${projectPrefix}-cancel-subscription-queue-lambda`,
+        functionName: `${props.variables.projectPrefix}-downgrade-subscription-queue-lambda`,
         description:
-          "This lambda is used to cancel subscriptions that have failed to resubscribe. It receives messages from the sqs queue",
+          "This lambda is used to downgrade subscriptions that have failed to resubscribe. It receives messages from the sqs queue",
         runtime: Runtime.NODEJS_22_X,
-        entry: "./resources/cancel-subscription-queue-handler.ts",
+        entry: "./resources/downgrade-subscription-handler.ts",
         handler: "handler",
         environment: {
           REGION: this.region,
@@ -367,11 +401,11 @@ export class RgbSplittingStack extends cdk.Stack {
 
     const getProcessedImagesLambda = new NodejsFunction(
       this,
-      `${projectPrefix}-get-processed-images-lambda`,
+      `${props.variables.projectPrefix}-get-processed-images-lambda`,
       {
-        functionName: `${projectPrefix}-get-processed-images-lambda`,
+        functionName: `${props.variables.projectPrefix}-get-processed-images-lambda`,
         description:
-          "This lambda is used to get the processed images for an image",
+          "This lambda is used to get the processed images for an image on the users application",
         runtime: Runtime.NODEJS_22_X,
         entry: "./resources/get-processed-images-handler.ts",
         handler: "handler",
@@ -383,31 +417,129 @@ export class RgbSplittingStack extends cdk.Stack {
       }
     );
 
+    const getProcessedImagesWebLambda = new NodejsFunction(
+      this,
+      `${props.variables.projectPrefix}-get-processed-images-web-lambda`,
+      {
+        functionName: `${props.variables.projectPrefix}-get-processed-images-web-lambda`,
+        description:
+          "This lambda is used to get the processed images for an image on the web portal.",
+        runtime: Runtime.NODEJS_22_X,
+        entry: "./resources/get-processed-images-web-handler.ts",
+        handler: "handler",
+        environment: {
+          REGION: this.region,
+          PROCESSED_IMAGES_TABLE_NAME: processedImagesTable.tableName,
+        },
+        timeout: cdk.Duration.seconds(10),
+      }
+    );
+
+    const cancelSubscriptionLambda = new NodejsFunction(
+      this,
+      `${props.variables.projectPrefix}-cancel-subscription-lambda`,
+      {
+        functionName: `${props.variables.projectPrefix}-cancel-subscription-lambda`,
+        description:
+          "This lambda is used to enable users cancel their subscription for a particular project",
+        runtime: Runtime.NODEJS_22_X,
+        entry: "./resources/cancel-subscription-handler.ts",
+        handler: "handler",
+        environment: {
+          REGION: this.region,
+          TABLE_NAME: projectsTable.tableName,
+          AVAILABLE_PLANS_SECRET_NAME: availablePlansSecretName,
+        },
+        timeout: cdk.Duration.seconds(10),
+      }
+    );
+
+    const getProjectInfoLambda = new NodejsFunction(
+      this,
+      `${props.variables.projectPrefix}-get-project-info-lambda`,
+      {
+        functionName: `${props.variables.projectPrefix}-get-project-info-lambda`,
+        description:
+          "This lambda is used to get the info for a particular project",
+        runtime: Runtime.NODEJS_22_X,
+        entry: "./resources/get-project-info-handler.ts",
+        handler: "handler",
+        environment: {
+          REGION: this.region,
+          TABLE_NAME: projectsTable.tableName,
+          PROCESSED_IMAGES_TABLE_NAME: processedImagesTable.tableName,
+        },
+        timeout: cdk.Duration.seconds(10),
+      }
+    );
+
+    const updateProjectNameLambda = new NodejsFunction(
+      this,
+      `${props.variables.projectPrefix}-update-project-name-lambda`,
+      {
+        functionName: `${props.variables.projectPrefix}-update-project-name-lambda`,
+        description:
+          "This lambda is used to update the name of a particular project",
+        runtime: Runtime.NODEJS_22_X,
+        entry: "./resources/update_project_name_handler.ts",
+        handler: "handler",
+        environment: {
+          REGION: this.region,
+          TABLE_NAME: projectsTable.tableName,
+        },
+        timeout: cdk.Duration.seconds(5),
+      }
+    );
+
+    const deleteProjectLambda = new NodejsFunction(
+      this,
+      `${props.variables.projectPrefix}-delete-project-lambda`,
+      {
+        functionName: `${props.variables.projectPrefix}-delete-project-lambda`,
+        description: "This lambda is used to delete a particular project",
+        runtime: Runtime.NODEJS_22_X,
+        entry: "./resources/delete_project_handler.ts",
+        handler: "handler",
+        environment: {
+          REGION: this.region,
+          TABLE_NAME: projectsTable.tableName,
+        },
+        timeout: cdk.Duration.seconds(5),
+      }
+    );
+
     //let the resubscribe lambda also receive events from the queue
     resubscribeLambda.addEventSource(
       new SqsEventSource(resubscribeSubscriptionQueue, { batchSize: 10 })
     );
 
-    cancelSubscriptionLambda.addEventSource(
-      new SqsEventSource(cancelSubscriptionQueue, {
-        batchSize: 10,
+    downgradeSubscriptionLambda.addEventSource(
+      new SqsEventSource(downgradeSubscriptionQueue, {
+        batchSize: 1000,
         reportBatchItemFailures: true,
+        maxBatchingWindow: cdk.Duration.minutes(2.5), //wait 2.5 minutes before sending the batch to the lambda
       })
     );
 
-    const snsTopic = new cdk.aws_sns.Topic(this, `${projectPrefix}-sns-topic`, {
-      topicName: `${projectPrefix}-sns-topic`,
-      displayName: `${projectPrefix}-ERROR`,
-    });
+    const snsTopic = new cdk.aws_sns.Topic(
+      this,
+      `${props.variables.projectPrefix}-sns-topic`,
+      {
+        topicName: `${props.variables.projectPrefix}-sns-topic`,
+        displayName: `${props.variables.projectPrefix}-ERROR`,
+      }
+    );
 
     snsTopic.addSubscription(
-      new cdk.aws_sns_subscriptions.EmailSubscription(alarmSubscriptionEmail)
+      new cdk.aws_sns_subscriptions.EmailSubscription(
+        props.variables.alarmSubscriptionEmail
+      )
     );
 
     //this alarm is triggered if there have been 3 errors or more in the splitting lambda in the last 10 minutes
     const splittingErrorAlarm = new cdk.aws_cloudwatch.Alarm(
       this,
-      `${projectPrefix}-splitting-errors-alarm`,
+      `${props.variables.projectPrefix}-splitting-errors-alarm`,
       {
         metric: splittingLambda.metricErrors({
           period: cdk.Duration.minutes(10),
@@ -419,7 +551,8 @@ export class RgbSplittingStack extends cdk.Stack {
           cdk.aws_cloudwatch.ComparisonOperator
             .GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
         actionsEnabled: true,
-        alarmName: `${projectPrefix}-splitting-alarm`.toUpperCase(),
+        alarmName:
+          `${props.variables.projectPrefix}-splitting-alarm`.toUpperCase(),
         alarmDescription:
           "There have been 3 or more errors in the lambda for splitting images in the last 10 minutes",
       }
@@ -432,7 +565,7 @@ export class RgbSplittingStack extends cdk.Stack {
     //this alarm is triggered if the resubscribe lambda fails 2 times in 10 minutes
     const resubscribeErrorAlarm = new cdk.aws_cloudwatch.Alarm(
       this,
-      `${projectPrefix}-resubscribe-errors-alarm`,
+      `${props.variables.projectPrefix}-resubscribe-errors-alarm`,
       {
         metric: resubscribeLambda.metricErrors({
           period: cdk.Duration.minutes(10),
@@ -444,9 +577,33 @@ export class RgbSplittingStack extends cdk.Stack {
           cdk.aws_cloudwatch.ComparisonOperator
             .GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
         actionsEnabled: true,
-        alarmName: `${projectPrefix}-resubscribe-alarm`.toUpperCase(),
+        alarmName:
+          `${props.variables.projectPrefix}-resubscribe-alarm`.toUpperCase(),
         alarmDescription:
           "There have been 2 or more errors in the lambda for resubscribing users in the last 10 minutes",
+      }
+    );
+
+    //this alarm is triggered if there has been more than 6 invocations in the last 10 minutes
+    //just incase the lambda is recursively invoked too many times
+    const resubscribeInfoAlarm = new cdk.aws_cloudwatch.Alarm(
+      this,
+      `${props.variables.projectPrefix}-resubscribe-info-alaram`,
+      {
+        metric: resubscribeLambda.metricInvocations({
+          period: cdk.Duration.minutes(10),
+          statistic: "sum",
+        }),
+        evaluationPeriods: 1,
+        threshold: 6,
+        comparisonOperator:
+          cdk.aws_cloudwatch.ComparisonOperator
+            .GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+        actionsEnabled: true,
+        alarmName:
+          `${props.variables.projectPrefix}-resubscribe-info-alarm`.toUpperCase(),
+        alarmDescription:
+          "There have been 6 or more invocations in the lambda for resubscribing users in the last 10 minutes",
       }
     );
 
@@ -454,10 +611,14 @@ export class RgbSplittingStack extends cdk.Stack {
       new cdk.aws_cloudwatch_actions.SnsAction(snsTopic)
     );
 
+    resubscribeInfoAlarm.addAlarmAction(
+      new cdk.aws_cloudwatch_actions.SnsAction(snsTopic)
+    );
+
     //this alarm is triggered if the webhook lambda fails 1 time in 10 minutes
     const webHookErrorAlarm = new cdk.aws_cloudwatch.Alarm(
       this,
-      `${projectPrefix}-webhook-errors-alarm`,
+      `${props.variables.projectPrefix}-webhook-errors-alarm`,
       {
         metric: webHookLambda.metricErrors({
           period: cdk.Duration.minutes(10),
@@ -469,7 +630,8 @@ export class RgbSplittingStack extends cdk.Stack {
           cdk.aws_cloudwatch.ComparisonOperator
             .GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
         actionsEnabled: true,
-        alarmName: `${projectPrefix}-webhook-alarm`.toUpperCase(),
+        alarmName:
+          `${props.variables.projectPrefix}-webhook-alarm`.toUpperCase(),
         alarmDescription:
           "There have been 4 or more errors in the lambda for handling webhooks in the last 10 minutes",
       }
@@ -481,7 +643,7 @@ export class RgbSplittingStack extends cdk.Stack {
 
     const generatePresignedUrlAlarm = new cdk.aws_cloudwatch.Alarm(
       this,
-      `${projectPrefix}-generate-presigned-url-alarm`,
+      `${props.variables.projectPrefix}-generate-presigned-url-alarm`,
       {
         metric: generatePresignedUrlLambda.metricErrors({
           period: cdk.Duration.minutes(10),
@@ -494,7 +656,7 @@ export class RgbSplittingStack extends cdk.Stack {
             .GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
         actionsEnabled: true,
         alarmName:
-          `${projectPrefix}-generate-presigned-url-alarm`.toUpperCase(),
+          `${props.variables.projectPrefix}-generate-presigned-url-alarm`.toUpperCase(),
         alarmDescription:
           "There have been 4 or more errors in the lambda for generating presigned URLs in the last 10 minutes",
       }
@@ -507,7 +669,7 @@ export class RgbSplittingStack extends cdk.Stack {
     //this alarm is triggered if the trigger charge lambda fails 4 times in 10 minutes
     const triggerChargeErrorAlarm = new cdk.aws_cloudwatch.Alarm(
       this,
-      `${projectPrefix}-trigger-charge-errors-alarm`,
+      `${props.variables.projectPrefix}-trigger-charge-errors-alarm`,
       {
         metric: triggerChargeLambda.metricErrors({
           period: cdk.Duration.minutes(10),
@@ -519,7 +681,8 @@ export class RgbSplittingStack extends cdk.Stack {
           cdk.aws_cloudwatch.ComparisonOperator
             .GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
         actionsEnabled: true,
-        alarmName: `${projectPrefix}-payments-alarm`.toUpperCase(),
+        alarmName:
+          `${props.variables.projectPrefix}-payments-alarm`.toUpperCase(),
         alarmDescription:
           "There have been 4 or more errors in the lambda for payments in the last 10 minutes",
       }
@@ -532,7 +695,7 @@ export class RgbSplittingStack extends cdk.Stack {
     //this alarm is triggered if there have been 5 failures in the lambda for getting processed results in the last 10 minutes
     const getProcessedResultsAlaram = new cdk.aws_cloudwatch.Alarm(
       this,
-      `${projectPrefix}-get-processed-results-alarm`,
+      `${props.variables.projectPrefix}-get-processed-results-alarm`,
       {
         metric: getProcessedImagesLambda.metricErrors({
           period: cdk.Duration.minutes(10),
@@ -544,7 +707,8 @@ export class RgbSplittingStack extends cdk.Stack {
           cdk.aws_cloudwatch.ComparisonOperator
             .GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
         actionsEnabled: true,
-        alarmName: `${projectPrefix}-get-processed-results-alarm`.toUpperCase(),
+        alarmName:
+          `${props.variables.projectPrefix}-get-processed-results-alarm`.toUpperCase(),
         alarmDescription:
           "There have been 5 or more errors in the lambda for getting processed results in the last 10 minutes",
       }
@@ -554,17 +718,41 @@ export class RgbSplittingStack extends cdk.Stack {
       new cdk.aws_cloudwatch_actions.SnsAction(snsTopic)
     );
 
-    //this alarm is triggered if there are messages in the cancel subscription dead letter queue
-    const cancelSubscriptionDLQAlarm = new cdk.aws_cloudwatch.Alarm(
+    //this alarm is triggered if there have been 5 failures in the lambda for getting users projects in the last 10 minutes
+    const getUsersApiKeysAlarm = new cdk.aws_cloudwatch.Alarm(
       this,
-      `${projectPrefix}-cancel-subscription-dlq-alarm`,
+      `${props.variables.projectPrefix}-get-users-apikeys-alarm`,
+      {
+        metric: getUsersProjectsLambda.metricErrors({
+          period: cdk.Duration.minutes(10),
+          statistic: "sum",
+        }),
+        threshold: 5,
+        evaluationPeriods: 1,
+        comparisonOperator:
+          cdk.aws_cloudwatch.ComparisonOperator
+            .GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+        actionsEnabled: true,
+        alarmName:
+          `${props.variables.projectPrefix}-get-users-apikeys-alarm`.toUpperCase(),
+        alarmDescription:
+          "There have been 5 or more errors in the lambda for getting users apikeys in the last 10 minutes",
+      }
+    );
+
+    getUsersApiKeysAlarm.addAlarmAction(
+      new cdk.aws_cloudwatch_actions.SnsAction(snsTopic)
+    );
+
+    //this alarm is triggered if there are messages in the downgrade subscription dead letter queue
+    const downgradeSubscriptionDLQAlarm = new cdk.aws_cloudwatch.Alarm(
+      this,
+      `${props.variables.projectPrefix}-downgrade-subscription-dlq-alarm`,
       {
         metric:
-          cancelSubscriptionDeadLetterQueue.metricApproximateNumberOfMessagesVisible(
-            {
-              statistic: "sum",
-            }
-          ),
+          downgradeSubscriptionDLQ.metricApproximateNumberOfMessagesVisible({
+            statistic: "sum",
+          }),
         evaluationPeriods: 1,
         threshold: 2,
         comparisonOperator:
@@ -572,19 +760,19 @@ export class RgbSplittingStack extends cdk.Stack {
             .GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
         actionsEnabled: true,
         alarmName:
-          `${projectPrefix}-cancel-subscription-dlq-alarm`.toUpperCase(),
+          `${props.variables.projectPrefix}-downgrade-subscription-dlq-alarm`.toUpperCase(),
         alarmDescription: "There are messages in the dead letter queue",
       }
     );
 
-    cancelSubscriptionDLQAlarm.addAlarmAction(
+    downgradeSubscriptionDLQAlarm.addAlarmAction(
       new cdk.aws_cloudwatch_actions.SnsAction(snsTopic)
     );
 
     //this alarm is triggered if there are messages in the resubscription dead letter queue
     const resubscriptionDLQAlarm = new cdk.aws_cloudwatch.Alarm(
       this,
-      `${projectPrefix}-resubscription-dlq-alarm`,
+      `${props.variables.projectPrefix}-resubscription-dlq-alarm`,
       {
         metric:
           resubscriptionDeadLetterQueue.metricApproximateNumberOfMessagesVisible(
@@ -598,7 +786,8 @@ export class RgbSplittingStack extends cdk.Stack {
           cdk.aws_cloudwatch.ComparisonOperator
             .GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
         actionsEnabled: true,
-        alarmName: `${projectPrefix}-resubscription-dlq-alarm`.toUpperCase(),
+        alarmName:
+          `${props.variables.projectPrefix}-resubscription-dlq-alarm`.toUpperCase(),
         alarmDescription:
           "There are messages in the resubscription dead letter queue",
       }
@@ -610,42 +799,47 @@ export class RgbSplittingStack extends cdk.Stack {
 
     const userAuthorizer = new TokenAuthorizer(
       this,
-      `${projectPrefix}-user-Authorizer`,
+      `${props.variables.projectPrefix}-user-Authorizer`,
       {
         handler: userAuthorizerLambda,
-        authorizerName: `${projectPrefix}-rest-api-token-authorizer`,
+        authorizerName: `${props.variables.projectPrefix}-rest-api-token-authorizer`,
         identitySource: "method.request.header.Authorization",
+        resultsCacheTtl: cdk.Duration.minutes(0), ///clerk uses short lived tokens, so caching was affecting auth
       }
     );
 
     //create the rest api
-    const rgbRestApi = new RestApi(this, `${projectPrefix}-rest-api-sh`, {
-      restApiName: `${projectPrefix}-rest-api-sh`,
-      description: "the base rest api for the rgb splitting",
-      defaultCorsPreflightOptions: {
-        allowOrigins: Cors.ALL_ORIGINS,
-        allowMethods: Cors.ALL_METHODS,
-        allowHeaders: [
-          "Content-Type",
-          "Authorization",
-          "X-Api-Key",
-          "x-api-key",
-        ],
-        allowCredentials: false,
-      },
-      deploy: true,
-      deployOptions: {
-        stageName: "dev",
-        description: "The dev api stage deployment for the rgb splitting",
-      },
-    });
+    const rgbRestApi = new RestApi(
+      this,
+      `${props.variables.projectPrefix}-rest-api-sh`,
+      {
+        restApiName: `${props.variables.projectPrefix}-rest-api-sh`,
+        description: "the base rest api for the rgb splitting",
+        defaultCorsPreflightOptions: {
+          allowOrigins: Cors.ALL_ORIGINS,
+          allowMethods: Cors.ALL_METHODS,
+          allowHeaders: [
+            "Content-Type",
+            "Authorization",
+            "X-Api-Key",
+            "x-api-key",
+          ],
+          allowCredentials: false,
+        },
+        deploy: true,
+        deployOptions: {
+          stageName: props.variables.stage,
+          description: `The ${props.variables.stage} api stage deployment for the rgb splitting`,
+        },
+      }
+    );
 
     //create the usage plans
     const freeTierUsagePlan = new UsagePlan(
       this,
-      `${projectPrefix}-free-plan`,
+      `${props.variables.projectPrefix}-free-plan`,
       {
-        name: `${projectPrefix}-free-plan`,
+        name: `${props.variables.projectPrefix}-free-plan`,
         description: "Free tier usage plan, 200 Requests per month",
         apiStages: [{ stage: rgbRestApi.deploymentStage }],
         quota: {
@@ -659,25 +853,29 @@ export class RgbSplittingStack extends cdk.Stack {
       }
     );
 
-    const proTierUsagePlan = new UsagePlan(this, `${projectPrefix}-pro-plan`, {
-      name: `${projectPrefix}-pro-plan`,
-      description: "Pro tier usage plan, 1000 Requests per month",
-      apiStages: [{ stage: rgbRestApi.deploymentStage }],
-      quota: {
-        limit: 1000,
-        period: Period.MONTH,
-      },
-      throttle: {
-        rateLimit: 5,
-        burstLimit: 50,
-      },
-    });
+    const proTierUsagePlan = new UsagePlan(
+      this,
+      `${props.variables.projectPrefix}-pro-plan`,
+      {
+        name: `${props.variables.projectPrefix}-pro-plan`,
+        description: "Pro tier usage plan, 1000 Requests per month",
+        apiStages: [{ stage: rgbRestApi.deploymentStage }],
+        quota: {
+          limit: 1000,
+          period: Period.MONTH,
+        },
+        throttle: {
+          rateLimit: 5,
+          burstLimit: 50,
+        },
+      }
+    );
 
     const executiveTierUsagePlan = new UsagePlan(
       this,
-      `${projectPrefix}-executive-plan`,
+      `${props.variables.projectPrefix}-executive-plan`,
       {
-        name: `${projectPrefix}-executive-plan`,
+        name: `${props.variables.projectPrefix}-executive-plan`,
         description: "Executive tier usage plan, 2500 Requests per month",
         apiStages: [{ stage: rgbRestApi.deploymentStage }],
         quota: {
@@ -691,6 +889,20 @@ export class RgbSplittingStack extends cdk.Stack {
       }
     );
 
+    /**
+     Usage plans are stored in AWS Secrets Manager to resolve circular dependency issues between the
+     1. Usage plans
+       2. Lambda functions
+      3. REST API integration
+     
+    Instead of using the standard `grantRead` method, which would  also create a dependency cycle, i:
+     1. created th usage plans & stored them in Secrets Manager
+      2. Integrate APIs with Lambda functions
+      3. Directly attach IAM policies to Lambda functions using the secret's name we passed into the usagePlanSecret construct, this way
+      the lambda has access to fetch the usage plans from the secret manager
+     
+      This approach breaks the dependency cycle while maintaining proper access control.
+     */
     const usagePlansSecret = new Secret(this, `${availablePlansSecretName}`, {
       secretName: `${availablePlansSecretName}`,
       secretObjectValue: {
@@ -708,23 +920,6 @@ export class RgbSplittingStack extends cdk.Stack {
         "this is used to store all the usage planIds so we dont have to keep passing them around",
     });
 
-    //this stores the maximum image sizes each plan can upload
-    const maxPlanSizesSecret = new Secret(this, `${maxPlanSizesSecretName}`, {
-      secretName: `${maxPlanSizesSecretName}`,
-      secretObjectValue: {
-        [PlanType.Free]: cdk.SecretValue.unsafePlainText(
-          String(10 * 1024 * 1024)
-        ),
-        [PlanType.Pro]: cdk.SecretValue.unsafePlainText(
-          String(20 * 1024 * 1024)
-        ),
-        [PlanType.Executive]: cdk.SecretValue.unsafePlainText(
-          String(80 * 1024 * 1024)
-        ),
-      },
-      description: "this is used to store the max plan sizes",
-    });
-
     const v1Root = rgbRestApi.root.addResource("v1");
 
     // route to generate presigned url
@@ -733,16 +928,33 @@ export class RgbSplittingStack extends cdk.Stack {
     //route for webhook events
     const webHookEventsRoute = v1Root.addResource("webhook");
 
-    //route to fetch all the api keys a user has
-    const getUsersApiKeysRoute = v1Root.addResource("keys");
+    //route to fetch  the projects a user has created
+    const getUsersProjectsRoute = v1Root.addResource("projects");
 
     //route to request payments
     const triggerChargeRoute = v1Root.addResource("trigger-payment");
 
-    //route to get processed results
-    const getProcessedImagesRoute = v1Root
-      .addResource("{projectId}")
-      .addResource(processedImagesRouteVar)
+    //route for getting project info
+    const projectInfoRoute = v1Root.addResource("{projectId}");
+
+    //route to update project name
+    const updateProjectNameRoute = projectInfoRoute.addResource("update");
+
+    //route to delete a project
+    const deleteProjectRoute = projectInfoRoute.addResource("delete");
+
+    //route to cancel a projects subscription
+    const cancelSubscriptionRoute = projectInfoRoute.addResource("cancel");
+
+    //route to get processed results -- USERS APPLICATION
+    const getProcessedImagesRoute = projectInfoRoute
+      .addResource("image")
+      .addResource("{imageId}");
+
+    //route to get processed results -- WEB APPLICATION
+    const getProcessedImagesWebRoute = projectInfoRoute
+      .addResource("web")
+      .addResource("image")
       .addResource("{imageId}");
 
     generatePresignedUrlRoute.addMethod(
@@ -758,9 +970,9 @@ export class RgbSplittingStack extends cdk.Stack {
       new LambdaIntegration(webHookLambda)
     );
 
-    getUsersApiKeysRoute.addMethod(
+    getUsersProjectsRoute.addMethod(
       HttpMethod.GET,
-      new LambdaIntegration(getUsersApiKeysLambda),
+      new LambdaIntegration(getUsersProjectsLambda),
       {
         authorizer: userAuthorizer,
         authorizationType: AuthorizationType.CUSTOM,
@@ -772,9 +984,55 @@ export class RgbSplittingStack extends cdk.Stack {
       new LambdaIntegration(triggerChargeLambda)
     );
 
+    projectInfoRoute.addMethod(
+      HttpMethod.GET,
+      new LambdaIntegration(getProjectInfoLambda),
+      {
+        authorizer: userAuthorizer,
+        authorizationType: AuthorizationType.CUSTOM,
+      }
+    );
+
+    updateProjectNameRoute.addMethod(
+      HttpMethod.PATCH,
+      new LambdaIntegration(updateProjectNameLambda),
+      {
+        authorizer: userAuthorizer,
+        authorizationType: AuthorizationType.CUSTOM,
+      }
+    );
+
+    deleteProjectRoute.addMethod(
+      HttpMethod.DELETE,
+      new LambdaIntegration(deleteProjectLambda),
+      {
+        authorizer: userAuthorizer,
+        authorizationType: AuthorizationType.CUSTOM,
+      }
+    );
+
     getProcessedImagesRoute.addMethod(
       HttpMethod.GET,
-      new LambdaIntegration(getProcessedImagesLambda)
+      new LambdaIntegration(getProcessedImagesLambda),
+      { apiKeyRequired: true }
+    );
+
+    getProcessedImagesWebRoute.addMethod(
+      HttpMethod.GET,
+      new LambdaIntegration(getProcessedImagesWebLambda),
+      {
+        authorizer: userAuthorizer,
+        authorizationType: AuthorizationType.CUSTOM,
+      }
+    );
+
+    cancelSubscriptionRoute.addMethod(
+      HttpMethod.PATCH,
+      new LambdaIntegration(cancelSubscriptionLambda),
+      {
+        authorizer: userAuthorizer,
+        authorizationType: AuthorizationType.CUSTOM,
+      }
     );
 
     //grant the webhook Lambda permission to create new ApiKeys & fetch all our available keys
@@ -782,6 +1040,7 @@ export class RgbSplittingStack extends cdk.Stack {
     webHookLambda.addToRolePolicy(
       new PolicyStatement({
         actions: [
+          "apigateway:GET",
           "apigateway:POST",
           "apigateway:PATCH",
           "apigateway:DELETE",
@@ -793,19 +1052,30 @@ export class RgbSplittingStack extends cdk.Stack {
           `arn:aws:apigateway:${this.region}::/usageplans`,
           `arn:aws:apigateway:${this.region}::/usageplans/*/keys`,
           `arn:aws:apigateway:${this.region}::/usageplans/*/keys/*`,
-          `arn:aws:secretsmanager:${this.region}:${this.account}:secret:${webhookSecretName}*`,
-          `arn:aws:secretsmanager:${this.region}:${this.account}:secret:${paymentSecretName}*`,
           `arn:aws:secretsmanager:${this.region}:${this.account}:secret:${availablePlansSecretName}*`,
+          `arn:aws:secretsmanager:${this.region}:${this.account}:secret:${props.variables.webhookSecretName}*`,
+          `arn:aws:secretsmanager:${this.region}:${this.account}:secret:${props.variables.paymentSecretName}*`,
         ],
       })
     );
 
     triggerChargeLambda.addToRolePolicy(
       new PolicyStatement({
-        actions: ["secretsmanager:GetSecretValue"],
+        actions: [
+          "apigateway:GET",
+          "apigateway:POST",
+          "apigateway:PATCH",
+          "apigateway:DELETE",
+          "secretsmanager:GetSecretValue",
+        ],
         resources: [
-          `arn:aws:secretsmanager:${this.region}:${this.account}:secret:${paymentSecretName}*`,
+          `arn:aws:apigateway:${this.region}::/apikeys`,
+          `arn:aws:apigateway:${this.region}::/apikeys/*`,
+          `arn:aws:apigateway:${this.region}::/usageplans`,
+          `arn:aws:apigateway:${this.region}::/usageplans/*/keys`,
+          `arn:aws:apigateway:${this.region}::/usageplans/*/keys/*`,
           `arn:aws:secretsmanager:${this.region}:${this.account}:secret:${availablePlansSecretName}*`,
+          `arn:aws:secretsmanager:${this.region}:${this.account}:secret:${props.variables.paymentSecretName}*`,
         ],
       })
     );
@@ -814,7 +1084,7 @@ export class RgbSplittingStack extends cdk.Stack {
       new PolicyStatement({
         actions: ["secretsmanager:GetSecretValue"],
         resources: [
-          `arn:aws:secretsmanager:${this.region}:${this.account}:secret:${clerkJwtSecretName}*`,
+          `arn:aws:secretsmanager:${this.region}:${this.account}:secret:${props.variables.clerkJwtSecretName}*`,
         ],
       })
     );
@@ -830,19 +1100,19 @@ export class RgbSplittingStack extends cdk.Stack {
           `arn:aws:apigateway:${this.region}::/apikeys`,
           `arn:aws:apigateway:${this.region}::/usageplans`, //i did this to prevent circular dependency issues between lambda, the rest api & the usage plans
           `arn:aws:apigateway:${this.region}::/usageplans/*/keys`,
-          `arn:aws:secretsmanager:${this.region}:${this.account}:secret:${paymentSecretName}*`,
           `arn:aws:secretsmanager:${this.region}:${this.account}:secret:${availablePlansSecretName}*`, // i did this to prevent circular dependency issue
+          `arn:aws:secretsmanager:${this.region}:${this.account}:secret:${props.variables.paymentSecretName}*`,
         ],
       })
     );
 
-    cancelSubscriptionLambda.addToRolePolicy(
+    downgradeSubscriptionLambda.addToRolePolicy(
       new PolicyStatement({
         actions: [
+          "apigateway:GET",
           "apigateway:POST",
           "apigateway:PATCH",
           "apigateway:DELETE",
-          "apigateway:GET",
           "secretsmanager:GetSecretValue",
         ],
         resources: [
@@ -856,11 +1126,42 @@ export class RgbSplittingStack extends cdk.Stack {
       })
     );
 
+    cancelSubscriptionLambda.addToRolePolicy(
+      new PolicyStatement({
+        actions: [
+          "apigateway:POST",
+          "apigateway:PATCH",
+          "apigateway:DELETE",
+          "apigateway:GET",
+        ],
+        resources: [
+          `arn:aws:apigateway:${this.region}::/apikeys`,
+          `arn:aws:apigateway:${this.region}::/apikeys/*`,
+          `arn:aws:apigateway:${this.region}::/usageplans`, //i did this to prevent circular dependency issues between lambda, the rest api & the usage plans
+          `arn:aws:apigateway:${this.region}::/usageplans/*/keys`,
+          `arn:aws:apigateway:${this.region}::/usageplans/*/keys/*`,
+        ],
+      })
+    );
+
+    deleteProjectLambda.addToRolePolicy(
+      new PolicyStatement({
+        actions: ["apigateway:DELETE"],
+        resources: [
+          `arn:aws:apigateway:${this.region}::/apikeys`,
+          `arn:aws:apigateway:${this.region}::/apikeys/*`,
+          `arn:aws:apigateway:${this.region}::/usageplans`, //i did this to prevent circular dependency issues between lambda, the rest api & the usage plans
+          `arn:aws:apigateway:${this.region}::/usageplans/*/keys`,
+          `arn:aws:apigateway:${this.region}::/usageplans/*/keys/*`,
+        ],
+      })
+    );
+
     const eventBridgeRole = new Role(
       this,
-      `${projectPrefix}-resubscribe-event-role`,
+      `${props.variables.projectPrefix}-resubscribe-event-role`,
       {
-        roleName: `${projectPrefix}-resubscribe-event-role`,
+        roleName: `${props.variables.projectPrefix}-resubscribe-event-role`,
         description:
           "This role allows eventbridge to trigger our resubscription lambda",
         assumedBy: new ServicePrincipal("scheduler.amazonaws.com"),
@@ -879,9 +1180,9 @@ export class RgbSplittingStack extends cdk.Stack {
     // //calls the cancel lambda every week
     // const eventBridgeTask = new EventBridgeSchedulerCreateScheduleTask(
     //   this,
-    //   `${projectPrefix}-resubscribe-eventbridge-task`,
+    //   `${props.variables.projectPrefix}-resubscribe-eventbridge-task`,
     //   {
-    //     scheduleName: `${projectPrefix}-resubscribe-eventbridge-task`,
+    //     scheduleName: `${props.variables.projectPrefix}-resubscribe-eventbridge-task`,
     //     schedule: Schedule.rate(cdk.Duration.minutes(3)),
     //     startDate: new Date(),
     //     description:
@@ -899,33 +1200,37 @@ export class RgbSplittingStack extends cdk.Stack {
     // );
 
     //for some reason, the eventbridge construct never created my scheduke but this works tho
-    new cdk.CfnResource(this, `${projectPrefix}-resubscribe-eventbridge-task`, {
-      type: "AWS::Scheduler::Schedule",
-      properties: {
-        Name: `${projectPrefix}-resubscribe-eventbridge-task`,
-        Description:
-          "This rule runs every week to resubscribe all users whose subscriptions have expired to their plan",
-        ScheduleExpression: "rate(7 days)",
-        State: "ENABLED",
-        FlexibleTimeWindow: {
-          Mode: "FLEXIBLE",
-          MaximumWindowInMinutes: 7,
-        },
-        Target: {
-          Arn: resubscribeLambda.functionArn,
-          RoleArn: eventBridgeRole.roleArn,
-          RetryPolicy: {
-            MaximumEventAgeInSeconds: 86400,
-            MaximumRetryAttempts: 4,
+    new cdk.CfnResource(
+      this,
+      `${props.variables.projectPrefix}-resubscribe-eventbridge-task`,
+      {
+        type: "AWS::Scheduler::Schedule",
+        properties: {
+          Name: `${props.variables.projectPrefix}-resubscribe-eventbridge-task`,
+          Description:
+            "This rule runs every week to resubscribe all users whose subscriptions have expired to their plan",
+          ScheduleExpression: "rate(7 days)",
+          State: "ENABLED",
+          FlexibleTimeWindow: {
+            Mode: "FLEXIBLE",
+            MaximumWindowInMinutes: 7,
+          },
+          Target: {
+            Arn: resubscribeLambda.functionArn,
+            RoleArn: eventBridgeRole.roleArn,
+            RetryPolicy: {
+              MaximumEventAgeInSeconds: 86400,
+              MaximumRetryAttempts: 4,
+            },
           },
         },
-      },
-    });
+      }
+    );
 
-    maxPlanSizesSecret.grantRead(generatePresignedUrlLambda);
-
-    cancelSubscriptionQueue.grantSendMessages(resubscribeLambda);
-    cancelSubscriptionQueue.grantConsumeMessages(cancelSubscriptionLambda);
+    downgradeSubscriptionQueue.grantSendMessages(resubscribeLambda);
+    downgradeSubscriptionQueue.grantConsumeMessages(
+      downgradeSubscriptionLambda
+    );
 
     resubscribeSubscriptionQueue.grantSendMessages(resubscribeLambda);
     resubscribeSubscriptionQueue.grantConsumeMessages(resubscribeLambda);
@@ -943,16 +1248,22 @@ export class RgbSplittingStack extends cdk.Stack {
 
     projectsTable.grantReadWriteData(webHookLambda);
     projectsTable.grantReadWriteData(resubscribeLambda);
-    projectsTable.grantReadData(generatePresignedUrlLambda);
+    projectsTable.grantReadWriteData(triggerChargeLambda);
+    projectsTable.grantReadWriteData(deleteProjectLambda);
+    projectsTable.grantReadWriteData(cancelSubscriptionLambda);
+    projectsTable.grantReadWriteData(downgradeSubscriptionLambda);
 
     projectsTable.grantWriteData(splittingLambda);
+    projectsTable.grantWriteData(updateProjectNameLambda);
+    projectsTable.grantReadData(generatePresignedUrlLambda);
 
-    projectsTable.grantReadData(getUsersApiKeysLambda);
-
-    projectsTable.grantReadWriteData(cancelSubscriptionLambda);
+    projectsTable.grantReadData(getProjectInfoLambda);
+    projectsTable.grantReadData(getUsersProjectsLambda);
 
     processedImagesTable.grantWriteData(splittingLambda);
+
+    processedImagesTable.grantReadData(getProjectInfoLambda);
     processedImagesTable.grantReadData(getProcessedImagesLambda);
-    // processedImagesTable.grantReadData(generatePresignedUrlLambda);
+    processedImagesTable.grantReadData(getProcessedImagesWebLambda);
   }
 }

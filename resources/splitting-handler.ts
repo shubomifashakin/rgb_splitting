@@ -82,7 +82,7 @@ export const handler: Handler = async (event: S3Event) => {
       channels,
       imageData,
       bucketName,
-      originalImageKey,
+      originalImageKey: originalImageKey.split("/")[0],
     });
 
     for (let i = 0; i < images.length; i++) {
@@ -98,7 +98,7 @@ export const handler: Handler = async (event: S3Event) => {
           Body: buffer,
           ContentType: "image/jpeg",
           Bucket: imageInfo.s3.bucket.name,
-          Key: processedInfo[i].key,
+          Key: `${processedInfo[i].key}.jpg`,
         })
       );
     }
@@ -118,8 +118,9 @@ export const handler: Handler = async (event: S3Event) => {
       new PutCommand({
         TableName: processedResultTable,
         Item: {
+          userId: data.user_id,
           results: processedImages,
-          imageId: originalImageKey,
+          imageId: originalImageKey.split("/")[0],
           projectId: data.project_id,
           originalImageUrl: `https://${bucketName}.s3.${region}.amazonaws.com/${originalImageKey}`,
           createdAt: Date.now(),

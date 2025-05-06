@@ -1,18 +1,14 @@
-export interface ExpiredProject {
-  id: string;
-  email: string;
-  userId: string;
-  projectName: string;
-  nextPaymentDate: number;
-  currentPlan: string;
+import { ProjectInfo } from "./projectInfo";
 
-  apiKeyInfo: {
-    apiKeyId: string;
-    usagePlanId: string;
-  };
-
-  cardTokenInfo: {
-    token: string;
-    expiry: string;
-  };
-}
+export interface ExpiredProject
+  extends Pick<
+    ProjectInfo,
+    | "email"
+    | "userId"
+    | "projectId"
+    | "projectName"
+    | "currentPlan"
+    | "cardTokenInfo"
+    | "nextPaymentDate"
+    | "apiKeyInfo"
+  > {}

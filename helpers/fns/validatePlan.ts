@@ -31,7 +31,7 @@ export async function validatePlan({
   paymentGatewayUrl: string;
 }): Promise<{
   planDetails: PaymentPlan;
-  chosenUsagePlan: string;
+  chosenUsagePlanId: string;
   paymentGatewaySecret: string;
 }> {
   const secretClient = new SecretsManagerClient({
@@ -56,7 +56,7 @@ export async function validatePlan({
     );
   }
 
-  const trimmedAvailablePlans = JSON.parse(availableUsagePlans.SecretString!);
+  const trimmedAvailablePlans = JSON.parse(availableUsagePlans.SecretString);
 
   //validate the usage plans received
   const {
@@ -105,6 +105,6 @@ export async function validatePlan({
   return {
     planDetails,
     paymentGatewaySecret: paymentGatewaySecret.SecretString,
-    chosenUsagePlan: allUsagePlans[planName as keyof typeof allUsagePlans],
+    chosenUsagePlanId: allUsagePlans[planName as keyof typeof allUsagePlans],
   };
 }

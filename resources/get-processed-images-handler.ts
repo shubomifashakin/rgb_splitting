@@ -4,8 +4,9 @@ import { DynamoDBDocumentClient, GetCommand } from "@aws-sdk/lib-dynamodb";
 
 import { z } from "zod";
 
-import { processedImagesRouteVar } from "../helpers/constants";
-import { projectIdValidator } from "../helpers/schemaValidator/validators";
+import { projectIdValidator } from "../helpers/schemaValidator/projectIdValidator";
+
+import { ProcessedImagesInfo } from "../types/processedResultInfo";
 
 const region = process.env.REGION!;
 const processedResultsTable = process.env.PROCESSED_IMAGES_TABLE_NAME!;
@@ -19,11 +20,11 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
   if (!pathParameters) {
     return {
       statusCode: 400,
-      body: JSON.stringify({ message: "Missing path parameters" }),
+      body: JSON.stringify({ message: "Bad Request" }),
     };
   }
 
-  const { success, data } = z
+  const { success, data, error } = z
     .object({
       projectId: projectIdValidator,
       imageId: z.string().uuid(),
@@ -31,7 +32,12 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     .safeParse(pathParameters);
 
   if (!success) {
-    return { statusCode: 400, body: "Invalid imageId or projectId" };
+    console.error("Failed to validate image key --->", error.issues);
+
+    return {
+      statusCode: 400,
+      body: JSON.stringify({ message: "Bad Request - Invalid image key" }),
+    };
   }
 
   const { imageId, projectId } = data;
@@ -39,14 +45,12 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
   console.log("image Id", imageId);
   console.log("project Id", projectId);
 
-  const fullImageId = `${projectId}/${processedImagesRouteVar}/${imageId}`;
-
   try {
     const results = await dynamo.send(
       new GetCommand({
         TableName: processedResultsTable,
         Key: {
-          imageId: fullImageId,
+          imageId,
           projectId,
         },
         ProjectionExpression: "createdAt, originalImageUrl, results",
@@ -60,9 +64,14 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
       };
     }
 
+    const processedResult = results.Item as Pick<
+      ProcessedImagesInfo,
+      "createdAt" | "originalImageUrl" | "results"
+    >;
+
     return {
       statusCode: 200,
-      body: JSON.stringify(results.Item),
+      body: JSON.stringify(processedResult),
     };
   } catch (error: unknown) {
     console.error("Failed to get processed images", error);
