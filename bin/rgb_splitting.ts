@@ -14,7 +14,7 @@ const projectPrefix = "rgb-splitting";
 const rgbDevStack = new RgbSplittingStack(app, "RgbSplitting-DEV-Stack", {
   variables: {
     projectPrefix: `${projectPrefix}-DEV`,
-    paymentGatewayUrl: process.env.DEV_PAYMENT_GATEWAY_URL!,
+    paymentGatewayUrl: process.env.PAYMENT_GATEWAY_URL!,
     paymentSecretName: process.env.DEV_PAYMENT_SECRET_NAME!,
     webhookSecretName: process.env.DEV_WEBHOOK_SECRET_NAME!,
     clerkJwtSecretName: process.env.DEV_CLERK_JWT_SECRET_NAME!,
