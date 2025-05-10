@@ -42,9 +42,7 @@ export const channelsValidator = z
       message: "Invalid channel value. Expects a string or an array of strings",
     }
   ) //normalize the value of channels
-  .transform(normalizeChannel)
-  .optional()
-  .default(defaultChannel);
+  .transform(normalizeChannel);
 
 //grain could either be a number or a number array
 //the resulting value will always be an array
@@ -70,20 +68,10 @@ export const grainValidator = z
   .optional()
   .default(defaultGrain);
 
-//i wanted a situation where users can exclude either channels or grain but not both
-export const processValidator = z
-  .object({
-    channels: channelsValidator,
-    grain: grainValidator,
-  })
-  .refine(
-    (data) => {
-      return data.channels !== undefined || data.grain !== undefined;
-    },
-    {
-      message: "At least one of 'channels' or 'grain' must be present.",
-    }
-  );
+export const processValidator = z.object({
+  channels: channelsValidator,
+  grain: grainValidator,
+});
 
 export type grainType = z.infer<typeof grainValidator>;
 export type ChannelType = z.infer<typeof channelsValidator>;
