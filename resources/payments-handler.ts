@@ -11,6 +11,10 @@ import {
   GetCommandOutput,
   DynamoDBDocumentClient,
 } from "@aws-sdk/lib-dynamodb";
+import {
+  SecretsManagerClient,
+  GetSecretValueCommand,
+} from "@aws-sdk/client-secrets-manager";
 
 import { ApiKeyInfo } from "../types/apiKeyInfo";
 import { validatePlan } from "../helpers/fns/validatePlan";
@@ -25,6 +29,11 @@ import { CreateApiKeyAndAttachToUsagePlan } from "../helpers/fns/createApiKey";
 import { migrateExistingProjectApiKey } from "../helpers/fns/migrateExistingProjectApiKey";
 import { newPaymentRequestBodyValidator } from "../helpers/schemaValidator/newPaymentRequestBodyValidator";
 
+import {
+  UsagePlans,
+  usagePlanValidator,
+} from "../helpers/schemaValidator/usagePlanValidator";
+
 const region = process.env.REGION!;
 const tableName = process.env.TABLE_NAME!;
 const paymentGatewayUrl = process.env.PAYMENT_GATEWAY_URL!;
@@ -37,6 +46,13 @@ const apiGatewayClient = new APIGatewayClient({
 
 const dynamo = new DynamoDBClient({ region });
 const dynamoClient = DynamoDBDocumentClient.from(dynamo);
+
+const secretClient = new SecretsManagerClient({
+  region,
+});
+
+let usagePlans: UsagePlans | undefined;
+let paymentGatewaySecret: string | undefined;
 
 export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
   const headers = {
@@ -99,14 +115,53 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
       }
     }
 
-    const { planDetails, chosenUsagePlanId, paymentGatewaySecret } =
-      await validatePlan({
-        region,
-        planName,
-        paymentGatewayUrl,
-        usagePlanSecretName,
-        paymentGatewaySecretName,
-      });
+    //if the payment gateway secret or usage plans secret do not exist yet, fetch them
+    if (!paymentGatewaySecret || !usagePlans) {
+      console.log("fetching secrets");
+
+      //fetch the payment gateway secret and the available usage plans secret
+      const [paymentGatewaySecretReq, availableUsagePlans] = await Promise.all([
+        secretClient.send(
+          new GetSecretValueCommand({ SecretId: paymentGatewaySecretName })
+        ),
+        secretClient.send(
+          new GetSecretValueCommand({ SecretId: usagePlanSecretName })
+        ),
+      ]);
+
+      if (
+        !paymentGatewaySecretReq.SecretString ||
+        !availableUsagePlans.SecretString
+      ) {
+        throw new Error(
+          "Payment gateway secret or available usage plans secret not found"
+        );
+      }
+
+      //validate the usage plans received
+      const {
+        error,
+        success,
+        data: allUsagePlans,
+      } = usagePlanValidator.safeParse(
+        JSON.parse(availableUsagePlans.SecretString)
+      );
+
+      if (!success) {
+        throw new Error(error.message);
+      }
+
+      //store the secrets so they can be reused
+      usagePlans = allUsagePlans;
+      paymentGatewaySecret = paymentGatewaySecretReq.SecretString;
+    }
+
+    const { planDetails, chosenUsagePlanId } = await validatePlan({
+      planName,
+      usagePlans,
+      paymentGatewayUrl,
+      paymentGatewaySecret: paymentGatewaySecret,
+    });
 
     //if the plan is free, no need for payments, create the api, attach to the free usage plan & shikenah
     if (planName === PlanType.Free) {

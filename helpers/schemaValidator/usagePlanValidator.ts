@@ -6,3 +6,5 @@ export const usagePlanValidator = z.object({
   [PlanType.Pro]: z.string(),
   [PlanType.Executive]: z.string(),
 });
+
+export type UsagePlans = z.infer<typeof usagePlanValidator>;

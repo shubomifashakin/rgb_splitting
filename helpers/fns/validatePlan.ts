@@ -1,10 +1,5 @@
-import {
-  GetSecretValueCommand,
-  SecretsManagerClient,
-} from "@aws-sdk/client-secrets-manager";
-
-import { PaymentPlan, PaymentPlansResponse } from "../../types/paymentPlans";
-import { usagePlanValidator } from "../schemaValidator/usagePlanValidator";
+import { PaymentPlansResponse } from "../../types/paymentPlans";
+import { UsagePlans } from "../schemaValidator/usagePlanValidator";
 
 /**
  * Fetches plans from the payment gateway and validates the specified plan name.
@@ -18,63 +13,24 @@ import { usagePlanValidator } from "../schemaValidator/usagePlanValidator";
  */
 
 export async function validatePlan({
-  paymentGatewaySecretName,
-  usagePlanSecretName,
   planName,
-  region,
+  usagePlans,
   paymentGatewayUrl,
+  paymentGatewaySecret,
 }: {
-  paymentGatewaySecretName: string;
-  usagePlanSecretName: string;
   planName: string;
-  region: string;
   paymentGatewayUrl: string;
-}): Promise<{
-  planDetails: PaymentPlan;
-  chosenUsagePlanId: string;
+  usagePlans: UsagePlans;
   paymentGatewaySecret: string;
-}> {
-  const secretClient = new SecretsManagerClient({
-    region,
-  });
-
+}) {
   const trimmedPlanName = planName.toLowerCase().trim();
-
-  //fetch the payment gateway secret and the available usage plans secret
-  const [paymentGatewaySecret, availableUsagePlans] = await Promise.all([
-    secretClient.send(
-      new GetSecretValueCommand({ SecretId: paymentGatewaySecretName })
-    ),
-    secretClient.send(
-      new GetSecretValueCommand({ SecretId: usagePlanSecretName })
-    ),
-  ]);
-
-  if (!paymentGatewaySecret.SecretString || !availableUsagePlans.SecretString) {
-    throw new Error(
-      "Payment gateway secret or available usage plans secret not found"
-    );
-  }
-
-  const trimmedAvailablePlans = JSON.parse(availableUsagePlans.SecretString);
-
-  //validate the usage plans received
-  const {
-    success,
-    error,
-    data: allUsagePlans,
-  } = usagePlanValidator.safeParse(trimmedAvailablePlans);
-
-  if (!success) {
-    throw new Error(error.message);
-  }
 
   const url = `${paymentGatewayUrl}/payment-plans?status=active`;
 
   const getAllPlansOnPaymentGatewayReq = await fetch(url, {
     method: "GET",
     headers: {
-      Authorization: `Bearer ${paymentGatewaySecret.SecretString}`,
+      Authorization: `Bearer ${paymentGatewaySecret}`,
       "Content-Type": "application/json",
       accept: "application/json",
     },
@@ -96,15 +52,14 @@ export async function validatePlan({
     (plan) => trimmedPlanName === plan.name.toLowerCase().trim()
   );
 
-  if (!planDetails || !(trimmedPlanName in allUsagePlans)) {
-    console.log(planDetails, allUsagePlans);
+  if (!planDetails || !(trimmedPlanName in usagePlans)) {
+    console.log(planDetails, usagePlans);
 
     throw new Error("Failed to find plan in available plans");
   }
 
   return {
     planDetails,
-    paymentGatewaySecret: paymentGatewaySecret.SecretString,
-    chosenUsagePlanId: allUsagePlans[planName as keyof typeof allUsagePlans],
+    chosenUsagePlanId: usagePlans[planName as keyof typeof usagePlans],
   };
 }

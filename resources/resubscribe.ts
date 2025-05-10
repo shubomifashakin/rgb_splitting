@@ -2,9 +2,17 @@ import { Handler, SQSEvent } from "aws-lambda";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  GetSecretValueCommand,
+  SecretsManagerClient,
+} from "@aws-sdk/client-secrets-manager";
 
 import { validatePlan } from "../helpers/fns/validatePlan";
 import { PlanType, planTypeToStatus } from "../helpers/constants";
+import {
+  UsagePlans,
+  usagePlanValidator,
+} from "../helpers/schemaValidator/usagePlanValidator";
 
 import { ExpiredProject } from "../types/expiredSubscriptionProjectInfo";
 
@@ -22,6 +30,13 @@ const client = new DynamoDBClient({ region });
 const dynamo = DynamoDBDocumentClient.from(client);
 
 const sqsQueue = new SQSClient({ apiVersion: "latest" });
+
+const secretClient = new SecretsManagerClient({
+  region,
+});
+
+let usagePlans: UsagePlans | undefined;
+let paymentGatewaySecret: string | undefined;
 
 //this works like this, it is initially triggered by an eventbridge schedule every 7 days
 //on first invocation, it has no cursor, so we fetch from the beginning
@@ -103,6 +118,49 @@ export const handler: Handler = async (event: SQSEvent | null) => {
 
     console.log("EXPIRED PROJECTS", projects);
 
+    //if the payment gateway secret or usage plans secret do not exist yet, fetch them
+    if (!paymentGatewaySecret || !usagePlans) {
+      console.log("fetching secrets");
+
+      //fetch the payment gateway secret and the available usage plans secret
+      const [paymentGatewaySecretReq, availableUsagePlans] = await Promise.all([
+        secretClient.send(
+          new GetSecretValueCommand({
+            SecretId: paymentGatewaySecretName,
+          })
+        ),
+        secretClient.send(
+          new GetSecretValueCommand({ SecretId: usagePlanSecretName })
+        ),
+      ]);
+
+      if (
+        !paymentGatewaySecretReq.SecretString ||
+        !availableUsagePlans.SecretString
+      ) {
+        throw new Error(
+          "Payment gateway secret or available usage plans secret not found"
+        );
+      }
+
+      //validate the usage plans received
+      const {
+        error,
+        success,
+        data: allUsagePlans,
+      } = usagePlanValidator.safeParse(
+        JSON.parse(availableUsagePlans.SecretString)
+      );
+
+      if (!success) {
+        throw new Error(error.message);
+      }
+
+      //store the secrets so they can be reused
+      usagePlans = allUsagePlans;
+      paymentGatewaySecret = paymentGatewaySecretReq.SecretString;
+    }
+
     //we loop through each user & try to resubscribe them, max 2 attempts
     for (const project of projects) {
       let attempts = 0;
@@ -112,14 +170,12 @@ export const handler: Handler = async (event: SQSEvent | null) => {
         await new Promise((resolve) => setTimeout(resolve, 1000));
 
         try {
-          const { planDetails, chosenUsagePlanId, paymentGatewaySecret } =
-            await validatePlan({
-              paymentGatewaySecretName,
-              usagePlanSecretName,
-              planName: project.currentPlan,
-              region,
-              paymentGatewayUrl,
-            });
+          const { planDetails, chosenUsagePlanId } = await validatePlan({
+            usagePlans,
+            paymentGatewayUrl,
+            planName: project.currentPlan,
+            paymentGatewaySecret: paymentGatewaySecret,
+          });
 
           const chargeReq = await fetch(
             `${paymentGatewayUrl}/tokenized-charges`,
