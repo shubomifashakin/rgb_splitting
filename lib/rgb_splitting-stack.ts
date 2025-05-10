@@ -923,7 +923,7 @@ export class RgbSplittingStack extends cdk.Stack {
     const v1Root = rgbRestApi.root.addResource("v1");
 
     // route to generate presigned url
-    const generatePresignedUrlRoute = v1Root.addResource("process");
+    const generatePresignedUrlRoute = v1Root.addResource("break");
 
     //route for webhook events
     const webHookEventsRoute = v1Root.addResource("webhook");
@@ -948,13 +948,13 @@ export class RgbSplittingStack extends cdk.Stack {
 
     //route to get processed results -- USERS APPLICATION
     const getProcessedImagesRoute = projectInfoRoute
-      .addResource("image")
+      .addResource("broken")
       .addResource("{imageId}");
 
     //route to get processed results -- WEB APPLICATION
     const getProcessedImagesWebRoute = projectInfoRoute
       .addResource("web")
-      .addResource("image")
+      .addResource("broken")
       .addResource("{imageId}");
 
     generatePresignedUrlRoute.addMethod(
@@ -1013,8 +1013,7 @@ export class RgbSplittingStack extends cdk.Stack {
 
     getProcessedImagesRoute.addMethod(
       HttpMethod.GET,
-      new LambdaIntegration(getProcessedImagesLambda),
-      { apiKeyRequired: true }
+      new LambdaIntegration(getProcessedImagesLambda)
     );
 
     getProcessedImagesWebRoute.addMethod(
