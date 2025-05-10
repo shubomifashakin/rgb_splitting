@@ -4,16 +4,20 @@ The RGB Splitting API is a cloud-based image processing solution that enables us
 
 # Core Features
 
-- Secure Webhook for API Key Generation – A webhook is triggered upon successful payment, creating and storing the user's API key.
-- Image Processing Service – Users send an image along with their API key as a header, and the system extracts the red, green & blue variants of the image & saves them to s3
+- RGB Splitting – Users send an image along with their API key as a header, and the system extracts the red, green & blue variants of the image & saves them to s3
+- Grain Effect – Users can apply a simple grain effect to their image
+- Object Recognition - Users can upload an image & get the objects detected in the image. (In progress)
 
-## Tech Stack
+## AWS Services
 
-- AWS Lambda - Two lambdas are used in this project. One for the image processing and one for api key generation
-- AWS S3 - This is used to store uploaded & processed images
-- AWS Dynamo Db - This is used to store the users api key & the link to the images they have generated with that particular api key
-- AWS Api Gateway - This acts as a reverse proxy to the lambda.
+The following AWS services are used in this project:
 
-## The System Architecture Diagram
-
-![alt text](rgb_system_diagram.png)
+- AWS S3
+- AWS SQS
+- AWS SNS
+- AWS Lambda
+- AWS Dynamo Db
+- AWS Cloudwatch
+- AWS EventBridge
+- AWS Api Gateway
+- AWS SecretsManager
