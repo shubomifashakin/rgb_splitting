@@ -78,7 +78,7 @@ export async function handler(event: AuthorizedApiGatewayEvent) {
     if (!apiKeyInfo.Item) {
       return {
         headers,
-        statusCode: 400,
+        statusCode: 404,
         body: JSON.stringify({ message: "Project not found" }),
       };
     }
