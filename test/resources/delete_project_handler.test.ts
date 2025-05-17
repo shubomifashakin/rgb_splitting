@@ -66,7 +66,7 @@ describe("delete-project_handler", () => {
     });
   });
 
-  test("it should not delete the project -- error 400 no userId", async () => {
+  test("it should not delete the project -- error 400 (no userId)", async () => {
     jest.doMock("@aws-sdk/lib-dynamodb", () => {
       return {
         DynamoDBDocumentClient: {
@@ -113,7 +113,7 @@ describe("delete-project_handler", () => {
     });
   });
 
-  test("it should not delete the project -- error 400 because invalid uuid", async () => {
+  test("it should not delete the project -- error 400 (invalid uuid)", async () => {
     jest.doMock("@aws-sdk/lib-dynamodb", () => {
       return {
         DynamoDBDocumentClient: {
@@ -160,7 +160,49 @@ describe("delete-project_handler", () => {
     });
   });
 
-  test("it should not delete the project -- error 500 because of dynamo error", async () => {
+  test("it should not delete the project -- error 404 (project not found)", async () => {
+    jest.doMock("@aws-sdk/lib-dynamodb", () => {
+      return {
+        DynamoDBDocumentClient: {
+          from: jest.fn().mockImplementation(() => ({
+            send: jest.fn().mockResolvedValue({
+              Item: undefined,
+            }),
+          })),
+        },
+        GetCommand: jest.fn(),
+        DeleteCommand: jest.fn(),
+      };
+    });
+
+    const event = {
+      pathParameters: {
+        projectId,
+      },
+      requestContext: {
+        authorizer: {
+          principalId: "1",
+        },
+      },
+    } as unknown as AuthorizedApiGatewayEvent;
+
+    const { handler } = await import("../../resources/delete_project_handler");
+
+    const res = await handler(event);
+
+    expect(res).toEqual({
+      statusCode: 404,
+      body: expect.stringContaining("Project not found"),
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "OPTIONS, POST, GET",
+        "Access-Control-Allow-Headers":
+          "Content-Type, Authorization, X-Api-Key",
+      },
+    });
+  });
+
+  test("it should not delete the project -- error 500 (dynamo error)", async () => {
     jest.doMock("@aws-sdk/lib-dynamodb", () => {
       return {
         DynamoDBDocumentClient: {

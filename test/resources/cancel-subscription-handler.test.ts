@@ -35,9 +35,7 @@ describe("cancel-subscription-handler", () => {
             }),
           })),
         },
-        GetCommand: jest.fn(() => {
-          console.log("hello world");
-        }),
+        GetCommand: jest.fn(),
         UpdateCommand: jest.fn(),
       };
     });
@@ -59,8 +57,6 @@ describe("cancel-subscription-handler", () => {
 
     const res = await handler(event);
 
-    console.log("res", res);
-
     expect(res).toEqual({
       statusCode: 200,
       body: JSON.stringify({ message: "Successfully cancelled subscription" }),
@@ -73,7 +69,7 @@ describe("cancel-subscription-handler", () => {
     });
   });
 
-  test("it should return a 400 error", async () => {
+  test("it should return a 400 error (invalid projectId)", async () => {
     jest.doMock("@aws-sdk/lib-dynamodb", () => {
       return {
         DynamoDBDocumentClient: {
@@ -88,9 +84,7 @@ describe("cancel-subscription-handler", () => {
             }),
           })),
         },
-        GetCommand: jest.fn(() => {
-          console.log("hello world");
-        }),
+        GetCommand: jest.fn(),
         UpdateCommand: jest.fn(),
       };
     });
@@ -101,7 +95,7 @@ describe("cancel-subscription-handler", () => {
 
     const event = {
       pathParameters: {
-        projectId: "",
+        projectId: "", //invalid uuid
       },
       requestContext: {
         authorizer: {
@@ -124,7 +118,7 @@ describe("cancel-subscription-handler", () => {
     });
   });
 
-  test("it should return a 404 error", async () => {
+  test("it should return a 404 error (project not found)", async () => {
     jest.doMock("@aws-sdk/lib-dynamodb", () => {
       return {
         DynamoDBDocumentClient: {
@@ -134,9 +128,7 @@ describe("cancel-subscription-handler", () => {
             }),
           })),
         },
-        GetCommand: jest.fn(() => {
-          console.log("hello world");
-        }),
+        GetCommand: jest.fn(),
         UpdateCommand: jest.fn(),
       };
     });
@@ -170,7 +162,7 @@ describe("cancel-subscription-handler", () => {
     });
   });
 
-  test("it should return a 500 error", async () => {
+  test("it should return a 500 error (dynamo error)", async () => {
     jest.doMock("@aws-sdk/lib-dynamodb", () => {
       return {
         DynamoDBDocumentClient: {
@@ -199,5 +191,52 @@ describe("cancel-subscription-handler", () => {
     } as unknown as AuthorizedApiGatewayEvent;
 
     await expect(handler(event)).rejects.toThrow("fake error");
+  });
+
+  test("it should return a 400 error (no userId)", async () => {
+    jest.doMock("@aws-sdk/lib-dynamodb", () => {
+      return {
+        DynamoDBDocumentClient: {
+          from: jest.fn().mockImplementation(() => ({
+            send: jest.fn().mockResolvedValue({
+              Item: {
+                apiKeyInfo: {
+                  apiKeyId: "fake-api-key-id",
+                  usagePlanId: "fake-usage-plan-id",
+                },
+              },
+            }),
+          })),
+        },
+        GetCommand: jest.fn(),
+        UpdateCommand: jest.fn(),
+      };
+    });
+
+    const { handler } = await import(
+      "../../resources/cancel-subscription-handler"
+    );
+
+    const event = {
+      pathParameters: {
+        projectId,
+      },
+      requestContext: {
+        authorizer: undefined,
+      },
+    } as unknown as AuthorizedApiGatewayEvent;
+
+    const res = await handler(event);
+
+    expect(res).toEqual({
+      statusCode: 400,
+      body: JSON.stringify({ message: "Unauthorized" }),
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "OPTIONS, POST, GET",
+        "Access-Control-Allow-Headers":
+          "Content-Type, Authorization, X-Api-Key",
+      },
+    });
   });
 });
