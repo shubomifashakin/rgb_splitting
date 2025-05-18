@@ -132,7 +132,7 @@ export const handler: Handler = async (event: S3Event) => {
 
     return;
   } catch (error: unknown) {
-    console.log(error);
+    console.error(error);
 
     //so it can be caught by alarm
     throw error;
