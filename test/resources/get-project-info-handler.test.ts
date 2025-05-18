@@ -1,6 +1,7 @@
 import { AuthorizedApiGatewayEvent } from "../../types/AuthorizedApiGateway";
 
 console.log = jest.fn();
+console.error = jest.fn();
 
 const fakeUUid = "e7d9f390-3c4b-4d2c-97a0-bc0fa03e1f8a";
 
@@ -394,6 +395,186 @@ describe("get project info handler", () => {
       body: expect.any(String),
     });
 
+    expect(console.log).toHaveBeenCalledWith(event);
+  });
+
+  test("it should return a 400 error due to invalid searchparams", async () => {
+    const event = {
+      pathParameters: {
+        projectId: fakeUUid,
+      },
+      requestContext: {
+        authorizer: {
+          principalId: fakeUUid,
+        },
+      },
+      queryStringParameters: {
+        field: "fake", //invalid
+      },
+    } as unknown as AuthorizedApiGatewayEvent;
+
+    const { handler } = await import(
+      "../../resources/get-project-info-handler"
+    );
+
+    const res = await handler(event);
+
+    expect(console.error).toHaveBeenCalledWith(
+      "Failed to validate project id",
+      expect.any(Object)
+    );
+
+    expect(res).toEqual({
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "OPTIONS, POST, GET",
+        "Access-Control-Allow-Headers":
+          "Content-Type, Authorization, X-Api-Key",
+      },
+      statusCode: 400,
+      body: expect.any(String),
+    });
+
+    expect(console.log).toHaveBeenCalledWith(event);
+  });
+
+  test("it should return a 404 error because project info for plans was not found", async () => {
+    const plans = {
+      currentPlan: "fake-plan",
+      nextPaymentDate: "fake-date",
+      currentBillingDate: "fake-date",
+      sub_status: "fake-status",
+      projectName: "fake-project",
+    };
+
+    const mockQueryCommand = jest.fn().mockResolvedValue({
+      Items: [],
+    });
+
+    jest.mock("@aws-sdk/lib-dynamodb", () => {
+      return {
+        DynamoDBDocumentClient: {
+          from: jest.fn().mockImplementation(() => ({
+            send: jest.fn().mockImplementation((command) => {
+              return command;
+            }),
+          })),
+        },
+        QueryCommand: mockQueryCommand,
+      };
+    });
+
+    const fakeUserId = "1";
+
+    const event = {
+      pathParameters: {
+        projectId: fakeUUid,
+      },
+      requestContext: {
+        authorizer: {
+          principalId: fakeUserId,
+        },
+      },
+      queryStringParameters: {
+        field: "plans",
+      },
+    } as unknown as AuthorizedApiGatewayEvent;
+
+    const { handler } = await import(
+      "../../resources/get-project-info-handler"
+    );
+
+    const res = await handler(event);
+
+    expect(mockQueryCommand).toHaveBeenCalledWith({
+      TableName: "fake-table",
+      KeyConditionExpression: "projectId = :projectId AND userId = :userId",
+      ExpressionAttributeValues: {
+        ":userId": fakeUserId,
+        ":projectId": fakeUUid,
+      },
+      ProjectionExpression:
+        "currentPlan, nextPaymentDate, currentBillingDate, sub_status, projectName",
+    });
+
+    expect(res).toEqual({
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "OPTIONS, POST, GET",
+        "Access-Control-Allow-Headers":
+          "Content-Type, Authorization, X-Api-Key",
+      },
+      statusCode: 404,
+      body: JSON.stringify({
+        message: "Project not found",
+      }),
+    });
+
+    expect(console.error).toHaveBeenCalledTimes(0);
+
+    expect(console.log).toHaveBeenCalledWith(event);
+  });
+
+  test("it should throw an error because project info Items for gallery was undefined", async () => {
+    const mockQueryCommand = jest.fn().mockResolvedValue({
+      Items: undefined, //Items is undefined
+    });
+
+    jest.mock("@aws-sdk/lib-dynamodb", () => {
+      return {
+        DynamoDBDocumentClient: {
+          from: jest.fn().mockImplementation(() => ({
+            send: jest.fn().mockImplementation((command) => {
+              return command;
+            }),
+          })),
+        },
+        QueryCommand: mockQueryCommand,
+      };
+    });
+
+    const fakeUserId = "1";
+
+    const event = {
+      pathParameters: {
+        projectId: fakeUUid,
+      },
+      requestContext: {
+        authorizer: {
+          principalId: fakeUserId,
+        },
+      },
+      queryStringParameters: {
+        field: "gallery",
+      },
+    } as unknown as AuthorizedApiGatewayEvent;
+
+    const { handler } = await import(
+      "../../resources/get-project-info-handler"
+    );
+
+    await expect(handler(event)).rejects.toThrow(Error);
+
+    expect(mockQueryCommand).toHaveBeenCalledWith({
+      TableName: "fake-processed",
+      KeyConditionExpression: "projectId = :projectId",
+      ExpressionAttributeValues: {
+        ":userId": fakeUserId,
+        ":projectId": fakeUUid,
+      },
+      ProjectionExpression: "originalImageUrl, createdAt, imageId",
+      Limit: 12,
+      ScanIndexForward: false,
+      ExclusiveStartKey: undefined,
+      FilterExpression: "userId = :userId",
+    });
+
+    expect(console.error).toHaveBeenCalledWith(
+      "Failed to get project info",
+      expect.any(Object)
+    );
+
+    expect(console.error).toHaveBeenCalledTimes(1);
     expect(console.log).toHaveBeenCalledWith(event);
   });
 });
