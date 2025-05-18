@@ -5,6 +5,7 @@ import { projectIdValidator } from "../helpers/schemaValidator/projectIdValidato
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { QueryCommand, DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { AuthorizedApiGatewayEvent } from "../types/AuthorizedApiGateway";
+import { transformZodError } from "../helpers/fns/transformZodError";
 
 const region = process.env.REGION;
 const processedImagesTableName = process.env.PROCESSED_IMAGES_TABLE_NAME;
@@ -20,6 +21,8 @@ export async function handler(event: AuthorizedApiGatewayEvent) {
   };
 
   const userId = event.requestContext.authorizer?.principalId;
+
+  console.log(event);
 
   if (!userId) {
     return {
@@ -52,7 +55,7 @@ export async function handler(event: AuthorizedApiGatewayEvent) {
     return {
       headers,
       statusCode: 400,
-      body: JSON.stringify({ message: "Bad Request" }),
+      body: transformZodError(error),
     };
   }
 
@@ -88,7 +91,7 @@ export async function handler(event: AuthorizedApiGatewayEvent) {
       body: JSON.stringify(results.Items[0]),
     };
   } catch (error) {
-    console.log("Failed to get processed results -->", error);
+    console.error("Failed to get processed results -->", error);
 
     throw error;
   }

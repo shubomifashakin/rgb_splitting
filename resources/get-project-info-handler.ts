@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import { transformZodError } from "../helpers/fns/transformZodError";
 import { AuthorizedApiGatewayEvent } from "../types/AuthorizedApiGateway";
+import { projectIdValidator } from "../helpers/schemaValidator/projectIdValidator";
 
 const region = process.env.REGION;
 const tableName = process.env.TABLE_NAME;
@@ -35,7 +36,7 @@ export async function handler(event: AuthorizedApiGatewayEvent) {
 
     const { success, error, data } = z
       .object({
-        projectId: z.string(),
+        projectId: projectIdValidator,
       })
       .safeParse(event.pathParameters);
 

@@ -32,7 +32,7 @@ const s3 = new S3Client({
 const ddbClient = new DynamoDBClient({ region });
 const dynamoClient = DynamoDBDocumentClient.from(ddbClient);
 
-export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
+export const handler = async (event: APIGatewayProxyEventV2) => {
   const headers = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "OPTIONS, POST, GET",
@@ -40,7 +40,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
   };
 
   if (!event.body) {
-    console.info("No event body received");
+    console.error("No event body received");
 
     return {
       headers,
@@ -54,7 +54,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
   const apiKey = event.headers?.["x-api-key"];
 
   if (!apiKey) {
-    console.info("No api key in header");
+    console.error("No api key in header");
 
     return {
       statusCode: 400,
@@ -95,52 +95,52 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     };
   }
 
-  //get the project the apikey is attached to && the maxPlan sizes from secret manager
-  const project = await dynamoClient.send(
-    new QueryCommand({
-      TableName: tableName,
-      KeyConditionExpression: "apiKey = :apiKey",
-      IndexName: "apiKeyIndex",
-      ExpressionAttributeValues: {
-        ":apiKey": apiKey,
-      },
-      ProjectionExpression: "projectId, userId, currentPlan",
-      Limit: 1,
-    })
-  );
-
-  if (!project.Items || !project.Items.length) {
-    return {
-      headers,
-      statusCode: 404,
-      body: JSON.stringify({
-        message: "No project found",
-      }),
-    };
-  }
-
-  const projectData = project.Items[0] as Pick<
-    ProjectInfo,
-    "projectId" | "userId" | "currentPlan"
-  >;
-
-  //if a free user tried to get multiple channels or grains from an image, shut it down. you not paying enough my g 🤷‍♂️
-  if (
-    projectData.currentPlan === PlanType.Free &&
-    (channels.length > 1 || grain.length > 1)
-  ) {
-    return {
-      headers,
-      statusCode: 400,
-      body: JSON.stringify({
-        message: "Free Plan does not support multiple channels or grains.",
-      }),
-    };
-  }
-
-  const imageKey = uuid();
-
   try {
+    //get the project the apikey is attached to && the maxPlan sizes from secret manager
+    const project = await dynamoClient.send(
+      new QueryCommand({
+        TableName: tableName,
+        KeyConditionExpression: "apiKey = :apiKey",
+        IndexName: "apiKeyIndex",
+        ExpressionAttributeValues: {
+          ":apiKey": apiKey,
+        },
+        ProjectionExpression: "projectId, userId, currentPlan",
+        Limit: 1,
+      })
+    );
+
+    if (!project.Items || !project.Items.length) {
+      return {
+        headers,
+        statusCode: 404,
+        body: JSON.stringify({
+          message: "No project found",
+        }),
+      };
+    }
+
+    const projectData = project.Items[0] as Pick<
+      ProjectInfo,
+      "projectId" | "userId" | "currentPlan"
+    >;
+
+    //if a free user tried to get multiple channels or grains from an image, shut it down. you not paying enough my g 🤷‍♂️
+    if (
+      projectData.currentPlan === PlanType.Free &&
+      (channels.length > 1 || grain.length > 1)
+    ) {
+      return {
+        headers,
+        statusCode: 400,
+        body: JSON.stringify({
+          message: "Free Plan does not support multiple channels or grains.",
+        }),
+      };
+    }
+
+    const imageKey = uuid();
+
     const grainValue = JSON.stringify(grain);
     const channelsValue = JSON.stringify(channels);
 
@@ -179,7 +179,11 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     //then return the poll url, which should be a get endpoint like this .../image/{id} id being the image key
 
     console.log("completed successfully");
-    return { statusCode: 200, body: JSON.stringify({ url, fields }), headers };
+    return {
+      statusCode: 200,
+      body: JSON.stringify({ url, fields }),
+      headers,
+    };
   } catch (error: unknown) {
     console.error("ERROR GENERATING PRESIGNED URL", error);
 
