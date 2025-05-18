@@ -321,6 +321,98 @@ describe("get project info handler", () => {
     expect(console.log).toHaveBeenCalledWith("completed successfully");
   });
 
+  test("it should get the project info for gallery with a start key", async () => {
+    const gallery = {
+      currentPlan: "fake-plan",
+      nextPaymentDate: "fake-date",
+      currentBillingDate: "fake-date",
+      sub_status: "fake-status",
+      projectName: "fake-project",
+    };
+
+    const mockQueryCommand = jest.fn().mockResolvedValue({
+      Items: [
+        {
+          ...gallery,
+        },
+      ],
+      LastEvaluatedKey: {
+        projectId: "1",
+      },
+    });
+
+    jest.mock("@aws-sdk/lib-dynamodb", () => {
+      return {
+        DynamoDBDocumentClient: {
+          from: jest.fn().mockImplementation(() => ({
+            send: jest.fn().mockImplementation((command) => {
+              return command;
+            }),
+          })),
+        },
+        QueryCommand: mockQueryCommand,
+      };
+    });
+
+    const fakeUserId = "1";
+
+    const event = {
+      pathParameters: {
+        projectId: fakeUUid,
+      },
+      requestContext: {
+        authorizer: {
+          principalId: fakeUserId,
+        },
+      },
+      queryStringParameters: {
+        field: "gallery",
+        query: encodeURIComponent(
+          JSON.stringify({
+            projectId: "1",
+          })
+        ),
+      },
+    } as unknown as AuthorizedApiGatewayEvent;
+
+    const { handler } = await import(
+      "../../resources/get-project-info-handler"
+    );
+
+    const res = await handler(event);
+
+    expect(mockQueryCommand).toHaveBeenCalledWith({
+      TableName: "fake-processed",
+      KeyConditionExpression: "projectId = :projectId",
+      ExpressionAttributeValues: {
+        ":userId": fakeUserId,
+        ":projectId": fakeUUid,
+      },
+      ProjectionExpression: "originalImageUrl, createdAt, imageId",
+      Limit: 12,
+      ScanIndexForward: false,
+      ExclusiveStartKey: { projectId: "1" },
+      FilterExpression: "userId = :userId",
+    });
+
+    expect(res).toEqual({
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "OPTIONS, POST, GET",
+        "Access-Control-Allow-Headers":
+          "Content-Type, Authorization, X-Api-Key",
+      },
+      statusCode: 200,
+      body: JSON.stringify({
+        projectInfo: [{ ...gallery }],
+        nextKey: { projectId: "1" },
+      }),
+    });
+
+    expect(console.log).toHaveBeenCalledWith(event);
+    expect(console.log).toHaveBeenCalledWith("completed successfully");
+  });
+
   test("it should return a 400 error because userId was not specified", async () => {
     const event = {
       pathParameters: {

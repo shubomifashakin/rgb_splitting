@@ -322,11 +322,77 @@ describe("generate presigned url", () => {
     });
   });
 
-  test("it should fail because a free plan user tried to get multiple channels or grains", async () => {
+  test("it should fail because a free plan user tried to get multiple channels", async () => {
     const fakeEvent = {
       body: JSON.stringify({
-        channels: ["RG", "R", "RG"],
-        grain: [0, 0, 10],
+        channels: ["RG", "R", "RG"], //multiple channels
+        grain: [0],
+      }),
+      headers: {
+        ["x-api-key"]: mockApiKey,
+      },
+    } as unknown as APIGatewayProxyEventV2;
+
+    const mockQueryCommand = jest.fn().mockResolvedValue({
+      Items: [
+        {
+          userId: mockUserId,
+          projectId: mockProjectId,
+          currentPlan: PlanType.Free, //free plan user
+        },
+      ],
+    });
+
+    jest.mock("@aws-sdk/lib-dynamodb", () => {
+      return {
+        DynamoDBDocumentClient: {
+          from: jest.fn().mockImplementation(() => ({
+            send: jest.fn().mockImplementation((command) => {
+              return command;
+            }),
+          })),
+        },
+        QueryCommand: mockQueryCommand,
+      };
+    });
+
+    const { handler } = await import("../../resources/generate-presigned-url");
+
+    const res = await handler(fakeEvent);
+
+    expect(mockQueryCommand).toHaveBeenCalledTimes(1);
+    expect(mockQueryCommand).toHaveBeenCalledWith({
+      TableName: process.env.TABLE_NAME!,
+      KeyConditionExpression: "apiKey = :apiKey",
+      IndexName: "apiKeyIndex",
+      ExpressionAttributeValues: {
+        ":apiKey": mockApiKey,
+      },
+      ProjectionExpression: "projectId, userId, currentPlan",
+      Limit: 1,
+    });
+
+    expect(console.error).toHaveBeenCalledTimes(0);
+
+    expect(res).toEqual({
+      statusCode: 400,
+      body: JSON.stringify({
+        message: "Free Plan does not support multiple channels or grains.",
+      }),
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "OPTIONS, POST, GET",
+        "Access-Control-Allow-Headers":
+          "Content-Type, Authorization, X-Api-Key",
+      },
+    });
+  });
+
+  test("it should fail because a free plan user tried to get multiple grains", async () => {
+    const fakeEvent = {
+      body: JSON.stringify({
+        channels: ["RG"],
+        grain: 0, //multiple grains
       }),
       headers: {
         ["x-api-key"]: mockApiKey,
