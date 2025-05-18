@@ -1,9 +1,13 @@
 import { SQSEvent } from "aws-lambda";
 import {
-  maxActiveFreeProjects,
   PlanType,
   PROJECT_STATUS,
+  maxActiveFreeProjects,
 } from "../../helpers/constants";
+import {
+  NotFoundException,
+  GetUsagePlanKeyCommand,
+} from "@aws-sdk/client-api-gateway";
 
 console.log = jest.fn();
 console.error = jest.fn();
@@ -13,11 +17,6 @@ const mockUsageSecret = JSON.stringify({
   pro: "pro",
   executive: "executive",
 });
-
-const mockUpdateApiKeyCommand = jest.fn();
-const mockGetUsagePlanKeyCommand = jest.fn();
-const mockCreateUsagePlanKeyCommand = jest.fn();
-const mockDeleteUsagePlanKeyCommand = jest.fn();
 
 const mockUpdateDynamo = jest.fn();
 
@@ -46,8 +45,12 @@ describe("downgrade subscription handler", () => {
     process.env.AVAILABLE_PLANS_SECRET_NAME = "fake-secret-name";
   });
 
+  //this checks for the normal flow, a project to be downgraded is sent to the queue,
+  //its still attached to its old usage plan & not attached to the new usage plan ( free plan)
+  //so obviously it should still be attached to the old usage plan but not be attached to the new plan
+  //the user has also not reached max free projects
   test("it should downgrade the apikey to free plan", async () => {
-    jest.doMock("@aws-sdk/client-secrets-manager", () => {
+    jest.mock("@aws-sdk/client-secrets-manager", () => {
       return {
         SecretsManagerClient: jest.fn().mockImplementation(() => ({
           send: jest.fn().mockResolvedValue({
@@ -58,6 +61,7 @@ describe("downgrade subscription handler", () => {
       };
     });
 
+    //max free plans not reached
     const mockQueryCommand = jest.fn(() => {
       return {
         Items: [1, 2],
@@ -70,7 +74,7 @@ describe("downgrade subscription handler", () => {
       };
     });
 
-    jest.doMock("@aws-sdk/lib-dynamodb", () => {
+    jest.mock("@aws-sdk/lib-dynamodb", () => {
       return {
         DynamoDBDocumentClient: {
           from: jest.fn().mockImplementation(() => ({
@@ -80,17 +84,46 @@ describe("downgrade subscription handler", () => {
           })),
         },
         GetCommand: mockGetCommand,
-        UpdateCommand: mockUpdateDynamo,
         QueryCommand: mockQueryCommand,
+        UpdateCommand: mockUpdateDynamo,
       };
     });
 
-    jest.doMock("@aws-sdk/client-api-gateway", () => {
+    const mockUpdateApiKeyCommand = jest.fn();
+    const mockGetUsagePlanKeyCommand = jest.fn().mockImplementation((args) => {
+      //when checking if it is still attach to the old usage plan let it be true
+      if (args.usagePlanId === fakeFoundProject.apiKeyInfo.usagePlanId) {
+        return Promise.resolve({
+          Item: {
+            apiKeyId: fakeFoundProject.apiKeyInfo.apiKeyId,
+            usagePlanId: JSON.parse(mockUsageSecret).free,
+          },
+        });
+      }
+
+      //when checking if it has been added to the new usage plan (let it be false)
+      if (args.usagePlanId === JSON.parse(mockUsageSecret).free) {
+        const error = new NotFoundException({
+          $metadata: {
+            httpStatusCode: 404,
+          },
+          message: "Apikey not attached",
+        });
+
+        throw error;
+      }
+
+      return Promise.resolve();
+    });
+    const mockCreateUsagePlanKeyCommand = jest.fn();
+    const mockDeleteUsagePlanKeyCommand = jest.fn();
+
+    jest.mock("@aws-sdk/client-api-gateway", () => {
       return {
         APIGatewayClient: jest.fn().mockImplementation(() => ({
           send: jest.fn(),
         })),
-        NotFoundException: jest.fn(),
+        NotFoundException: NotFoundException, //use the atcual implementation of the error
         UpdateApiKeyCommand: mockUpdateApiKeyCommand,
         GetUsagePlanKeyCommand: mockGetUsagePlanKeyCommand,
         CreateUsagePlanKeyCommand: mockCreateUsagePlanKeyCommand,
@@ -136,13 +169,220 @@ describe("downgrade subscription handler", () => {
     expect(mockQueryCommand).toHaveBeenCalledTimes(1);
     expect(mockGetCommand).toHaveBeenCalledTimes(1);
 
-    expect(mockGetUsagePlanKeyCommand).toHaveBeenCalledWith({
+    //the first call for checking if the users apikey is still attached to old plan
+    expect(mockGetUsagePlanKeyCommand).toHaveBeenNthCalledWith(1, {
       keyId: fakeFoundProject.apiKeyInfo.apiKeyId,
       usagePlanId: fakeFoundProject.apiKeyInfo.usagePlanId,
     });
 
+    //the second call for checking if the users apikey is already attached to new plan
+    expect(mockGetUsagePlanKeyCommand).toHaveBeenNthCalledWith(2, {
+      keyId: fakeFoundProject.apiKeyInfo.apiKeyId,
+      usagePlanId: JSON.parse(mockUsageSecret).free,
+    });
+
     //it should call getUsagePlanKeyCommand twice, one for checking if its attached to old plan & one for checking if its attached to new plan
     expect(mockGetUsagePlanKeyCommand).toHaveBeenCalledTimes(2);
+
+    //it should call the deleteUsagePlanKeyCommand once for removing the apikey from the old plan
+    expect(mockDeleteUsagePlanKeyCommand).toHaveBeenCalledTimes(1);
+
+    //it should have added the users apikey to the free usage plan
+    expect(mockCreateUsagePlanKeyCommand).toHaveBeenCalledTimes(1);
+    expect(mockCreateUsagePlanKeyCommand).toHaveBeenCalledWith({
+      keyType: "API_KEY",
+      usagePlanId: JSON.parse(mockUsageSecret).free,
+      keyId: fakeFoundProject.apiKeyInfo.apiKeyId,
+    });
+
+    //the update command should be called with expected params
+    expect(mockUpdateDynamo).toHaveBeenCalledWith({
+      TableName: process.env.TABLE_NAME!,
+      Key: {
+        userId: fakeEvent.userId,
+        projectId: fakeEvent.projectId,
+      },
+      UpdateExpression:
+        "set apiKeyInfo.usagePlanId = :usagePlanId, currentPlan = :planName, sub_status = :subStatus",
+      ExpressionAttributeValues: {
+        ":planName": PlanType.Free,
+        ":usagePlanId": JSON.parse(mockUsageSecret).free,
+        ":subStatus": PROJECT_STATUS.ActiveFree,
+      },
+    });
+    expect(mockUpdateDynamo).toHaveBeenCalledTimes(1);
+
+    expect(console.log).toHaveBeenCalledWith("completed successfully");
+    expect(console.error).toHaveBeenCalledTimes(0);
+    expect(res).toEqual({ batchItemFailures: [] });
+  });
+
+  //this tests a situation where after successfully removing the apikey from old plan, something happended
+  //and the entire process had to be repeated again,
+  //when the process runs again, it should not try to remove from old plan
+  //and should only attach to the new plan
+  test("it should downgrade the apikey to free plan", async () => {
+    jest.mock("@aws-sdk/client-secrets-manager", () => {
+      return {
+        SecretsManagerClient: jest.fn().mockImplementation(() => ({
+          send: jest.fn().mockResolvedValue({
+            SecretString: mockUsageSecret,
+          }),
+        })),
+        GetSecretValueCommand: jest.fn(),
+      };
+    });
+
+    const mockQueryCommand = jest.fn(() => {
+      return {
+        Items: [1, 2],
+      };
+    });
+
+    const mockGetCommand = jest.fn(() => {
+      return {
+        Item: fakeFoundProject,
+      };
+    });
+
+    jest.mock("@aws-sdk/lib-dynamodb", () => {
+      return {
+        DynamoDBDocumentClient: {
+          from: jest.fn().mockImplementation(() => ({
+            send: jest
+              .fn()
+              .mockImplementation((command) => Promise.resolve(command)),
+          })),
+        },
+        GetCommand: mockGetCommand,
+        QueryCommand: mockQueryCommand,
+        UpdateCommand: mockUpdateDynamo,
+      };
+    });
+
+    //should throw a notFoundException that the api key was not found, insinuating
+    //that the apiKey has been removed from the oldPlan (when it reaches removeFromOldPlan)
+    //and that the apiKey has not been attached to the new plan (when it reaches attachedToNewPlan of migrateExistingProjectApiKey)
+
+    const mockGetUsagePlanKeyCommand = jest.fn().mockImplementation((args) => {
+      //when checking if it is still attach to the old usage plan let it be true
+      if (args.usagePlanId === fakeFoundProject.apiKeyInfo.usagePlanId) {
+        const error = new NotFoundException({
+          $metadata: {
+            httpStatusCode: 404,
+          },
+          message: "Apikey not attached to old plans",
+        });
+
+        throw error;
+      }
+
+      //when checking if it has been added to the new usage plan (let it be false)
+      if (args.usagePlanId === JSON.parse(mockUsageSecret).free) {
+        const error = new NotFoundException({
+          $metadata: {
+            httpStatusCode: 404,
+          },
+          message: "Apikey not attached to new plan",
+        });
+
+        throw error;
+      }
+
+      return Promise.resolve();
+    });
+
+    const mockCreateUsagePlanKeyCommand = jest.fn();
+    const mockDeleteUsagePlanKeyCommand = jest.fn();
+    const mockUpdateApiKeyCommand = jest.fn();
+
+    jest.mock("@aws-sdk/client-api-gateway", () => {
+      return {
+        APIGatewayClient: jest.fn().mockImplementation(() => ({
+          send: jest.fn().mockImplementation((command) => {
+            if (command instanceof GetUsagePlanKeyCommand) {
+              return mockGetUsagePlanKeyCommand();
+            }
+            return command;
+          }),
+        })),
+        UpdateApiKeyCommand: mockUpdateApiKeyCommand,
+        GetUsagePlanKeyCommand: mockGetUsagePlanKeyCommand,
+        CreateUsagePlanKeyCommand: mockCreateUsagePlanKeyCommand,
+        DeleteUsagePlanKeyCommand: mockDeleteUsagePlanKeyCommand,
+        NotFoundException, //use the real implementation
+      };
+    });
+
+    const { handler } = await import(
+      "../../resources/downgrade-subscription-handler"
+    );
+
+    const event = {
+      Records: [
+        {
+          body: JSON.stringify(fakeEvent),
+          messageId: "fake-message-id",
+        },
+      ],
+    };
+
+    const res = await handler(event as unknown as SQSEvent);
+
+    expect(mockGetCommand).toHaveBeenCalledTimes(1);
+    expect(mockGetCommand).toHaveBeenCalledWith({
+      TableName: process.env.TABLE_NAME!,
+      Key: {
+        userId: fakeEvent.userId,
+        projectId: fakeEvent.projectId,
+      },
+      ProjectionExpression: "apiKeyInfo, sub_status, currentPlan",
+    });
+
+    expect(mockQueryCommand).toHaveBeenCalledWith({
+      TableName: process.env.TABLE_NAME!,
+      IndexName: "userIdSubStatusIndex",
+      KeyConditionExpression: "userId = :userId and sub_status = :status",
+      ExpressionAttributeValues: {
+        ":userId": fakeEvent.userId,
+        ":status": PROJECT_STATUS.ActiveFree,
+      },
+      Limit: maxActiveFreeProjects,
+    });
+    expect(mockQueryCommand).toHaveBeenCalledTimes(1);
+
+    expect(mockGetUsagePlanKeyCommand).toHaveBeenCalledTimes(2);
+
+    //first is to check if its still attached to old plan
+    expect(mockGetUsagePlanKeyCommand).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        keyId: fakeFoundProject.apiKeyInfo.apiKeyId,
+        usagePlanId: fakeFoundProject.apiKeyInfo.usagePlanId,
+      })
+    );
+
+    //its not attached to old plan so delete should not be called
+    expect(mockDeleteUsagePlanKeyCommand).toHaveBeenCalledTimes(0);
+
+    //second is to check if its attached to free plan
+    expect(mockGetUsagePlanKeyCommand).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        keyId: fakeFoundProject.apiKeyInfo.apiKeyId,
+        usagePlanId: JSON.parse(mockUsageSecret).free,
+      })
+    );
+
+    //its not attached to new plan, so create should be called
+    expect(mockCreateUsagePlanKeyCommand).toHaveBeenCalledTimes(1);
+    expect(mockCreateUsagePlanKeyCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        keyId: fakeFoundProject.apiKeyInfo.apiKeyId,
+        usagePlanId: JSON.parse(mockUsageSecret).free,
+        keyType: "API_KEY",
+      })
+    );
 
     //the update command should be called with expected params
     expect(mockUpdateDynamo).toHaveBeenCalledWith({
@@ -179,7 +419,7 @@ describe("downgrade subscription handler", () => {
       };
     });
 
-    jest.doMock("@aws-sdk/lib-dynamodb", () => {
+    jest.mock("@aws-sdk/lib-dynamodb", () => {
       return {
         DynamoDBDocumentClient: {
           from: jest.fn().mockImplementation(() => ({
@@ -194,7 +434,7 @@ describe("downgrade subscription handler", () => {
       };
     });
 
-    jest.doMock("@aws-sdk/client-secrets-manager", () => {
+    jest.mock("@aws-sdk/client-secrets-manager", () => {
       return {
         SecretsManagerClient: jest.fn().mockImplementation(() => ({
           send: jest.fn().mockResolvedValue({
@@ -205,7 +445,9 @@ describe("downgrade subscription handler", () => {
       };
     });
 
-    jest.doMock("@aws-sdk/client-api-gateway", () => {
+    const mockUpdateApiKeyCommand = jest.fn();
+
+    jest.mock("@aws-sdk/client-api-gateway", () => {
       return {
         APIGatewayClient: jest.fn().mockImplementation(() => ({
           send: jest.fn(),
@@ -300,7 +542,7 @@ describe("downgrade subscription handler", () => {
       };
     });
 
-    jest.doMock("@aws-sdk/lib-dynamodb", () => {
+    jest.mock("@aws-sdk/lib-dynamodb", () => {
       return {
         DynamoDBDocumentClient: {
           from: jest.fn().mockImplementation(() => ({
@@ -313,7 +555,7 @@ describe("downgrade subscription handler", () => {
       };
     });
 
-    jest.doMock("@aws-sdk/client-secrets-manager", () => {
+    jest.mock("@aws-sdk/client-secrets-manager", () => {
       return {
         SecretsManagerClient: jest.fn().mockImplementation(() => ({
           send: jest.fn(() => {
@@ -326,7 +568,9 @@ describe("downgrade subscription handler", () => {
       };
     });
 
-    jest.doMock("@aws-sdk/client-api-gateway", () => {
+    const mockUpdateApiKeyCommand = jest.fn();
+
+    jest.mock("@aws-sdk/client-api-gateway", () => {
       return {
         APIGatewayClient: jest.fn().mockImplementation(() => ({
           send: jest.fn(),
@@ -417,7 +661,7 @@ describe("downgrade subscription handler", () => {
   });
 
   test("it should return a batchItem failure -- due to dynamo error", async () => {
-    jest.doMock("@aws-sdk/lib-dynamodb", () => {
+    jest.mock("@aws-sdk/lib-dynamodb", () => {
       return {
         DynamoDBDocumentClient: {
           from: jest.fn().mockImplementation(() => ({
@@ -430,7 +674,7 @@ describe("downgrade subscription handler", () => {
       };
     });
 
-    jest.doMock("@aws-sdk/client-secrets-manager", () => {
+    jest.mock("@aws-sdk/client-secrets-manager", () => {
       return {
         SecretsManagerClient: jest.fn().mockImplementation(() => ({
           send: jest.fn().mockResolvedValue({
@@ -441,13 +685,13 @@ describe("downgrade subscription handler", () => {
       };
     });
 
-    jest.doMock("@aws-sdk/client-api-gateway", () => {
+    jest.mock("@aws-sdk/client-api-gateway", () => {
       return {
         APIGatewayClient: jest.fn().mockImplementation(() => ({
           send: jest.fn(),
         })),
         NotFoundException: jest.fn(),
-        UpdateApiKeyCommand: mockUpdateApiKeyCommand,
+        UpdateApiKeyCommand: jest.fn(),
         GetUsagePlanKeyCommand: jest.fn(),
         CreateUsagePlanKeyCommand: jest.fn(),
         DeleteUsagePlanKeyCommand: jest.fn(),
@@ -468,6 +712,7 @@ describe("downgrade subscription handler", () => {
     };
 
     const res = await handler(event as unknown as SQSEvent);
+
     expect(console.error).toHaveBeenCalledWith(
       `Error fetching project info, REASON ${expect(Object)}`
     );
@@ -483,7 +728,7 @@ describe("downgrade subscription handler", () => {
   });
 
   test("it should return a batchItem failure -- due to invalid usage plans", async () => {
-    jest.doMock("@aws-sdk/lib-dynamodb", () => {
+    jest.mock("@aws-sdk/lib-dynamodb", () => {
       return {
         DynamoDBDocumentClient: {
           from: jest.fn().mockImplementation(() => ({
@@ -504,7 +749,7 @@ describe("downgrade subscription handler", () => {
       };
     });
 
-    jest.doMock("@aws-sdk/client-secrets-manager", () => {
+    jest.mock("@aws-sdk/client-secrets-manager", () => {
       return {
         SecretsManagerClient: jest.fn().mockImplementation(() => ({
           send: jest.fn().mockResolvedValue({
@@ -515,13 +760,13 @@ describe("downgrade subscription handler", () => {
       };
     });
 
-    jest.doMock("@aws-sdk/client-api-gateway", () => {
+    jest.mock("@aws-sdk/client-api-gateway", () => {
       return {
         APIGatewayClient: jest.fn().mockImplementation(() => ({
           send: jest.fn(),
         })),
         NotFoundException: jest.fn(),
-        UpdateApiKeyCommand: mockUpdateApiKeyCommand,
+        UpdateApiKeyCommand: jest.fn(),
         GetUsagePlanKeyCommand: jest.fn(),
         CreateUsagePlanKeyCommand: jest.fn(),
         DeleteUsagePlanKeyCommand: jest.fn(),
@@ -574,7 +819,7 @@ describe("downgrade subscription handler", () => {
   });
 
   test("it should return a batchItem failure -- project was not found", async () => {
-    jest.doMock("@aws-sdk/lib-dynamodb", () => {
+    jest.mock("@aws-sdk/lib-dynamodb", () => {
       return {
         DynamoDBDocumentClient: {
           from: jest.fn().mockImplementation(() => ({
@@ -608,13 +853,13 @@ describe("downgrade subscription handler", () => {
       };
     });
 
-    jest.doMock("@aws-sdk/client-api-gateway", () => {
+    jest.mock("@aws-sdk/client-api-gateway", () => {
       return {
         APIGatewayClient: jest.fn().mockImplementation(() => ({
           send: jest.fn(),
         })),
         NotFoundException: jest.fn(),
-        UpdateApiKeyCommand: mockUpdateApiKeyCommand,
+        UpdateApiKeyCommand: jest.fn(),
         GetUsagePlanKeyCommand: jest.fn(),
         CreateUsagePlanKeyCommand: jest.fn(),
         DeleteUsagePlanKeyCommand: jest.fn(),
@@ -647,7 +892,7 @@ describe("downgrade subscription handler", () => {
   });
 
   test("it should return a batchItem failure -- no secret", async () => {
-    jest.doMock("@aws-sdk/lib-dynamodb", () => {
+    jest.mock("@aws-sdk/lib-dynamodb", () => {
       return {
         DynamoDBDocumentClient: {
           from: jest.fn().mockImplementation(() => ({
@@ -670,7 +915,7 @@ describe("downgrade subscription handler", () => {
       };
     });
 
-    jest.doMock("@aws-sdk/client-secrets-manager", () => {
+    jest.mock("@aws-sdk/client-secrets-manager", () => {
       return {
         SecretsManagerClient: jest.fn().mockImplementation(() => ({
           send: jest.fn(() => {
@@ -683,13 +928,13 @@ describe("downgrade subscription handler", () => {
       };
     });
 
-    jest.doMock("@aws-sdk/client-api-gateway", () => {
+    jest.mock("@aws-sdk/client-api-gateway", () => {
       return {
         APIGatewayClient: jest.fn().mockImplementation(() => ({
           send: jest.fn(),
         })),
         NotFoundException: jest.fn(),
-        UpdateApiKeyCommand: mockUpdateApiKeyCommand,
+        UpdateApiKeyCommand: jest.fn(),
         GetUsagePlanKeyCommand: jest.fn(),
         CreateUsagePlanKeyCommand: jest.fn(),
         DeleteUsagePlanKeyCommand: jest.fn(),

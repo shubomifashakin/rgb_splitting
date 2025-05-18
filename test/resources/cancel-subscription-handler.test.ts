@@ -1,4 +1,8 @@
+import { PROJECT_STATUS } from "../../helpers/constants";
 import { AuthorizedApiGatewayEvent } from "../../types/AuthorizedApiGateway";
+
+console.log = jest.fn();
+console.error = jest.fn();
 
 jest.mock("@aws-sdk/client-api-gateway", () => {
   return {
@@ -20,23 +24,30 @@ describe("cancel-subscription-handler", () => {
   });
 
   test("it should cancel a subscription", async () => {
-    //do the mock of dynamoDb first b4 importing the handler
-    jest.doMock("@aws-sdk/lib-dynamodb", () => {
+    const userId = "1";
+
+    const mockGetCommand = jest.fn().mockResolvedValue({
+      Item: {
+        apiKeyInfo: {
+          apiKeyId: "fake-api-key-id",
+          usagePlanId: "fake-usage-plan-id",
+        },
+      },
+    });
+
+    const mockUpdateCommand = jest.fn();
+
+    jest.mock("@aws-sdk/lib-dynamodb", () => {
       return {
         DynamoDBDocumentClient: {
           from: jest.fn().mockImplementation(() => ({
-            send: jest.fn().mockResolvedValue({
-              Item: {
-                apiKeyInfo: {
-                  apiKeyId: "fake-api-key-id",
-                  usagePlanId: "fake-usage-plan-id",
-                },
-              },
+            send: jest.fn().mockImplementation((command) => {
+              return command;
             }),
           })),
         },
-        GetCommand: jest.fn(),
-        UpdateCommand: jest.fn(),
+        GetCommand: mockGetCommand,
+        UpdateCommand: mockUpdateCommand,
       };
     });
 
@@ -50,12 +61,33 @@ describe("cancel-subscription-handler", () => {
       },
       requestContext: {
         authorizer: {
-          principalId: "1",
+          principalId: userId,
         },
       },
     } as unknown as AuthorizedApiGatewayEvent;
 
     const res = await handler(event);
+
+    expect(mockGetCommand).toHaveBeenCalledWith({
+      TableName: process.env.TABLE_NAME!,
+      Key: {
+        userId,
+        projectId,
+      },
+      ProjectionExpression: "apiKeyInfo",
+    });
+
+    expect(mockUpdateCommand).toHaveBeenCalledWith({
+      TableName: process.env.TABLE_NAME!,
+      Key: {
+        userId,
+        projectId,
+      },
+      ExpressionAttributeValues: {
+        ":status": PROJECT_STATUS.Inactive,
+      },
+      UpdateExpression: "set sub_status = :status",
+    });
 
     expect(res).toEqual({
       statusCode: 200,
@@ -70,24 +102,7 @@ describe("cancel-subscription-handler", () => {
   });
 
   test("it should return a 400 error (invalid projectId)", async () => {
-    jest.doMock("@aws-sdk/lib-dynamodb", () => {
-      return {
-        DynamoDBDocumentClient: {
-          from: jest.fn().mockImplementation(() => ({
-            send: jest.fn().mockResolvedValue({
-              Item: {
-                apiKeyInfo: {
-                  apiKeyId: "fake-api-key-id",
-                  usagePlanId: "fake-usage-plan-id",
-                },
-              },
-            }),
-          })),
-        },
-        GetCommand: jest.fn(),
-        UpdateCommand: jest.fn(),
-      };
-    });
+    const userId = "1";
 
     const { handler } = await import(
       "../../resources/cancel-subscription-handler"
@@ -99,7 +114,7 @@ describe("cancel-subscription-handler", () => {
       },
       requestContext: {
         authorizer: {
-          principalId: "1",
+          principalId: userId,
         },
       },
     } as unknown as AuthorizedApiGatewayEvent;
@@ -119,17 +134,23 @@ describe("cancel-subscription-handler", () => {
   });
 
   test("it should return a 404 error (project not found)", async () => {
-    jest.doMock("@aws-sdk/lib-dynamodb", () => {
+    const mockGetCommand = jest.fn().mockResolvedValue({
+      Item: undefined,
+    });
+
+    const userId = "1";
+
+    jest.mock("@aws-sdk/lib-dynamodb", () => {
       return {
         DynamoDBDocumentClient: {
           from: jest.fn().mockImplementation(() => ({
-            send: jest.fn().mockResolvedValue({
-              Item: undefined,
+            send: jest.fn().mockImplementation((command) => {
+              return command;
             }),
           })),
         },
-        GetCommand: jest.fn(),
         UpdateCommand: jest.fn(),
+        GetCommand: mockGetCommand,
       };
     });
 
@@ -143,16 +164,29 @@ describe("cancel-subscription-handler", () => {
       },
       requestContext: {
         authorizer: {
-          principalId: "1",
+          principalId: userId,
         },
       },
     } as unknown as AuthorizedApiGatewayEvent;
 
     const res = await handler(event);
 
+    expect(console.log).toHaveBeenCalledWith(event);
+    expect(console.log).toHaveBeenLastCalledWith("Project not found");
+
+    expect(mockGetCommand).toHaveBeenCalledTimes(1);
+    expect(mockGetCommand).toHaveBeenCalledWith({
+      TableName: process.env.TABLE_NAME!,
+      Key: {
+        userId,
+        projectId,
+      },
+      ProjectionExpression: "apiKeyInfo",
+    });
+
     expect(res).toEqual({
       statusCode: 404,
-      body: expect.any(String),
+      body: JSON.stringify({ message: "Project not found" }),
       headers: {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "OPTIONS, POST, GET",
@@ -163,7 +197,7 @@ describe("cancel-subscription-handler", () => {
   });
 
   test("it should return a 500 error (dynamo error)", async () => {
-    jest.doMock("@aws-sdk/lib-dynamodb", () => {
+    jest.mock("@aws-sdk/lib-dynamodb", () => {
       return {
         DynamoDBDocumentClient: {
           from: jest.fn().mockImplementation(() => ({
@@ -191,28 +225,13 @@ describe("cancel-subscription-handler", () => {
     } as unknown as AuthorizedApiGatewayEvent;
 
     await expect(handler(event)).rejects.toThrow("fake error");
+    expect(console.error).toHaveBeenCalledWith(
+      "FAILED TO CANCEL USERS SUBSCRIPTION",
+      expect.any(Error)
+    );
   });
 
   test("it should return a 400 error (no userId)", async () => {
-    jest.doMock("@aws-sdk/lib-dynamodb", () => {
-      return {
-        DynamoDBDocumentClient: {
-          from: jest.fn().mockImplementation(() => ({
-            send: jest.fn().mockResolvedValue({
-              Item: {
-                apiKeyInfo: {
-                  apiKeyId: "fake-api-key-id",
-                  usagePlanId: "fake-usage-plan-id",
-                },
-              },
-            }),
-          })),
-        },
-        GetCommand: jest.fn(),
-        UpdateCommand: jest.fn(),
-      };
-    });
-
     const { handler } = await import(
       "../../resources/cancel-subscription-handler"
     );
@@ -227,6 +246,9 @@ describe("cancel-subscription-handler", () => {
     } as unknown as AuthorizedApiGatewayEvent;
 
     const res = await handler(event);
+
+    expect(console.log).toHaveBeenCalledTimes(1);
+    expect(console.log).toHaveBeenCalledWith(event);
 
     expect(res).toEqual({
       statusCode: 400,
