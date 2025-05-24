@@ -1,5 +1,4 @@
 import { S3Event } from "aws-lambda";
-import { Handler } from "aws-cdk-lib/aws-lambda";
 import {
   GetObjectCommand,
   PutObjectCommand,
@@ -21,10 +20,10 @@ const s3client = new S3Client({ region });
 const ddbClient = new DynamoDBClient({ region });
 const dynamoClient = DynamoDBDocumentClient.from(ddbClient);
 
-export const handler: Handler = async (event: S3Event) => {
+export const handler = async (event: S3Event) => {
   try {
     if (!event.Records.length) {
-      console.log("No records found");
+      console.error("No records found");
 
       throw new Error("No records found");
     }
@@ -44,7 +43,7 @@ export const handler: Handler = async (event: S3Event) => {
     );
 
     if (!s3Image.Body) {
-      console.log("No image found");
+      console.error("No image found");
 
       throw new Error("No image found");
     }
@@ -55,9 +54,10 @@ export const handler: Handler = async (event: S3Event) => {
     );
 
     if (!success) {
-      console.log(error.message);
+      const errorMessage = `Invalid image metadata ${error.message}`;
+      console.error(errorMessage);
 
-      throw new Error(`Invalid image metadata ${error.message}`);
+      throw new Error(errorMessage);
     }
 
     const { channels, grains } = data;
@@ -78,6 +78,7 @@ export const handler: Handler = async (event: S3Event) => {
     const imageData = canvasCtx.getImageData(0, 0, image.width, image.height);
 
     const { images, processedInfo } = await processImage({
+      region,
       grains,
       channels,
       imageData,
@@ -132,7 +133,7 @@ export const handler: Handler = async (event: S3Event) => {
 
     return;
   } catch (error: unknown) {
-    console.log(error);
+    console.error(error);
 
     //so it can be caught by alarm
     throw error;

@@ -100,6 +100,10 @@ export const handler = async (event: SQSEvent): Promise<SQSBatchResponse> => {
         }
 
         if (!foundProject.value.Item) {
+          console.error(
+            `Project not found for ${projectInfo.email}, projectId ${projectInfo.projectId}`
+          );
+
           throw new Error(
             `Project not found for ${projectInfo.email}, projectId ${projectInfo.projectId}`
           );
@@ -110,6 +114,10 @@ export const handler = async (event: SQSEvent): Promise<SQSBatchResponse> => {
             "TOTAL ACTIVE FREE PROJECTS --->",
             freeProjects.value.Items?.length
           );
+        }
+
+        if (freeProjects.status === "rejected") {
+          console.log("failed to get total active free plans");
         }
 
         const canHaveFreePlan =

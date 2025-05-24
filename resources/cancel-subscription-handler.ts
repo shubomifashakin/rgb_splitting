@@ -109,7 +109,7 @@ export const handler = async (event: AuthorizedApiGatewayEvent) => {
       body: JSON.stringify({ message: "Successfully cancelled subscription" }),
     };
   } catch (error: unknown) {
-    console.log("FAILED TO CANCEL USERS SUBSCRIPTION", error);
+    console.error("FAILED TO CANCEL USERS SUBSCRIPTION", error);
 
     throw error;
   }

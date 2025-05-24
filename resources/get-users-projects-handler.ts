@@ -61,7 +61,7 @@ export const handler = async (event: AuthorizedApiGatewayEvent) => {
       headers,
     };
   } catch (error: unknown) {
-    console.log("FAILED TO GET USERS API KEYS FROM DB", error);
+    console.error("FAILED TO GET USERS API KEYS FROM DB", error);
 
     throw error;
   }

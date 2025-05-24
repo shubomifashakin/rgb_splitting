@@ -13,6 +13,7 @@ const possibleChannels = Object.values(Channels);
 
 const channelValueValidator = z
   .string()
+  .transform((val) => val.toLowerCase())
   .refine((val) => possibleChannels.includes(val as Channels), {
     message: "Invalid Process. Invalid channel value",
   });
