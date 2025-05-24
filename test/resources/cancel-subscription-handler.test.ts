@@ -4,33 +4,35 @@ import { AuthorizedApiGatewayEvent } from "../../types/AuthorizedApiGateway";
 console.log = jest.fn();
 console.error = jest.fn();
 
+const mockUpdateApiKeyCommand = jest.fn();
+
 jest.mock("@aws-sdk/client-api-gateway", () => {
   return {
     APIGatewayClient: jest.fn().mockImplementation(() => ({
       send: jest.fn(),
     })),
-    UpdateApiKeyCommand: jest.fn(),
+    UpdateApiKeyCommand: mockUpdateApiKeyCommand,
   };
 });
 
 const projectId = "e7d9f390-3c4b-4d2c-97a0-bc0fa03e1f8a";
+const userId = "8b7e0e3c-3f4e-4868-8f06-8e8a3f5c51f2";
+const apiKeyId = "6ffc1fcc-432a-4f6c-9bfc-95c505781b4e";
 
 describe("cancel-subscription-handler", () => {
   beforeEach(() => {
     jest.resetModules();
     jest.clearAllMocks();
+
     process.env.REGION = "fake-region";
     process.env.TABLE_NAME = "fake-table-name";
   });
 
   test("it should cancel a subscription", async () => {
-    const userId = "1";
-
     const mockGetCommand = jest.fn().mockResolvedValue({
       Item: {
         apiKeyInfo: {
-          apiKeyId: "fake-api-key-id",
-          usagePlanId: "fake-usage-plan-id",
+          apiKeyId: apiKeyId,
         },
       },
     });
@@ -68,6 +70,8 @@ describe("cancel-subscription-handler", () => {
 
     const res = await handler(event);
 
+    expect(console.log).toHaveBeenCalledWith(event);
+
     expect(mockGetCommand).toHaveBeenCalledWith({
       TableName: process.env.TABLE_NAME!,
       Key: {
@@ -75,6 +79,19 @@ describe("cancel-subscription-handler", () => {
         projectId,
       },
       ProjectionExpression: "apiKeyInfo",
+    });
+
+    expect(console.log).toHaveBeenCalledWith("disabling key");
+
+    expect(mockUpdateApiKeyCommand).toHaveBeenCalledWith({
+      apiKey: apiKeyId,
+      patchOperations: [
+        {
+          op: "replace",
+          path: "/enabled",
+          value: "false",
+        },
+      ],
     });
 
     expect(mockUpdateCommand).toHaveBeenCalledWith({
@@ -89,6 +106,8 @@ describe("cancel-subscription-handler", () => {
       UpdateExpression: "set sub_status = :status",
     });
 
+    expect(console.log).toHaveBeenLastCalledWith("completed successfully");
+
     expect(res).toEqual({
       statusCode: 200,
       body: JSON.stringify({ message: "Successfully cancelled subscription" }),
@@ -102,8 +121,6 @@ describe("cancel-subscription-handler", () => {
   });
 
   test("it should return a 400 error (invalid projectId)", async () => {
-    const userId = "1";
-
     const { handler } = await import(
       "../../resources/cancel-subscription-handler"
     );
@@ -137,8 +154,6 @@ describe("cancel-subscription-handler", () => {
     const mockGetCommand = jest.fn().mockResolvedValue({
       Item: undefined,
     });
-
-    const userId = "1";
 
     jest.mock("@aws-sdk/lib-dynamodb", () => {
       return {
@@ -219,12 +234,15 @@ describe("cancel-subscription-handler", () => {
       },
       requestContext: {
         authorizer: {
-          principalId: "1",
+          principalId: userId,
         },
       },
     } as unknown as AuthorizedApiGatewayEvent;
 
     await expect(handler(event)).rejects.toThrow("fake error");
+
+    expect(console.log).toHaveBeenCalledWith(event);
+
     expect(console.error).toHaveBeenCalledWith(
       "FAILED TO CANCEL USERS SUBSCRIPTION",
       expect.any(Error)
