@@ -39,7 +39,7 @@ export async function handler(event: AuthorizedApiGatewayEvent) {
     if (!userId) {
       return {
         headers,
-        statusCode: 400,
+        statusCode: 401,
         body: JSON.stringify({ message: "Unauthorized" }),
       };
     }

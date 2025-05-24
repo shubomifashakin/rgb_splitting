@@ -1,13 +1,20 @@
 import { AuthorizedApiGatewayEvent } from "../../types/AuthorizedApiGateway";
 
 const projectId = "e7d9f390-3c4b-4d2c-97a0-bc0fa03e1f8a";
+const userId = "e7d9f390-3c4b-4d2c-97a0-bc0fa05e1f8a";
+const apiKey = "e7d9f390-3c4b-4d2c-97a0-bc0fa05e1f8a";
+
+console.log = jest.fn();
+console.error = jest.fn();
+
+const mockDeleteApiKeyCommand = jest.fn();
 
 jest.mock("@aws-sdk/client-api-gateway", () => {
   return {
     APIGatewayClient: jest.fn().mockImplementation(() => ({
       send: jest.fn(),
     })),
-    DeleteApiKeyCommand: jest.fn(),
+    DeleteApiKeyCommand: mockDeleteApiKeyCommand,
   };
 });
 
@@ -20,22 +27,28 @@ describe("delete-project_handler", () => {
   });
 
   test("it should delete the project", async () => {
+    const mockGetCommand = jest.fn().mockResolvedValue({
+      Item: {
+        apiKeyInfo: {
+          apiKeyId: apiKey,
+          usagePlanId: "fake-usage-plan-id",
+        },
+      },
+    });
+
+    const mockDeleteCommand = jest.fn();
+
     jest.doMock("@aws-sdk/lib-dynamodb", () => {
       return {
         DynamoDBDocumentClient: {
           from: jest.fn().mockImplementation(() => ({
-            send: jest.fn().mockResolvedValue({
-              Item: {
-                apiKeyInfo: {
-                  apiKeyId: "fake-api-key-id",
-                  usagePlanId: "fake-usage-plan-id",
-                },
-              },
+            send: jest.fn().mockImplementation((command) => {
+              return command;
             }),
           })),
         },
-        GetCommand: jest.fn(),
-        DeleteCommand: jest.fn(),
+        GetCommand: mockGetCommand,
+        DeleteCommand: mockDeleteCommand,
       };
     });
 
@@ -45,7 +58,7 @@ describe("delete-project_handler", () => {
       },
       requestContext: {
         authorizer: {
-          principalId: "1",
+          principalId: userId,
         },
       },
     } as unknown as AuthorizedApiGatewayEvent;
@@ -53,6 +66,33 @@ describe("delete-project_handler", () => {
     const { handler } = await import("../../resources/delete_project_handler");
 
     const res = await handler(event);
+
+    expect(console.log).toHaveBeenCalledWith(event);
+    expect(console.log).toHaveBeenCalledWith("User id -->", userId);
+    expect(console.log).toHaveBeenCalledWith("Project id -->", projectId);
+
+    expect(mockGetCommand).toHaveBeenCalledWith({
+      TableName: process.env.TABLE_NAME,
+      Key: {
+        userId,
+        projectId,
+      },
+      ProjectionExpression: "apiKeyInfo",
+    });
+
+    expect(mockDeleteCommand).toHaveBeenCalledWith({
+      TableName: process.env.TABLE_NAME,
+      Key: {
+        userId,
+        projectId,
+      },
+    });
+
+    expect(mockDeleteApiKeyCommand).toHaveBeenCalledWith({
+      apiKey,
+    });
+
+    expect(console.log).toHaveBeenLastCalledWith("completed successfully");
 
     expect(res).toEqual({
       statusCode: 200,
@@ -66,33 +106,14 @@ describe("delete-project_handler", () => {
     });
   });
 
-  test("it should not delete the project -- error 400 (no userId)", async () => {
-    jest.doMock("@aws-sdk/lib-dynamodb", () => {
-      return {
-        DynamoDBDocumentClient: {
-          from: jest.fn().mockImplementation(() => ({
-            send: jest.fn().mockResolvedValue({
-              Item: {
-                apiKeyInfo: {
-                  apiKeyId: "fake-api-key-id",
-                  usagePlanId: "fake-usage-plan-id",
-                },
-              },
-            }),
-          })),
-        },
-        GetCommand: jest.fn(),
-        DeleteCommand: jest.fn(),
-      };
-    });
-
+  test("it should not delete the project -- error 401 (no userId)", async () => {
     const event = {
       pathParameters: {
         projectId,
       },
       requestContext: {
         authorizer: {
-          principalId: "", //no userId here
+          principalId: null, //no userId here
         },
       },
     } as unknown as AuthorizedApiGatewayEvent;
@@ -101,8 +122,10 @@ describe("delete-project_handler", () => {
 
     const res = await handler(event);
 
+    expect(console.log).toHaveBeenCalledWith(event);
+
     expect(res).toEqual({
-      statusCode: 400,
+      statusCode: 401,
       body: JSON.stringify({ message: "Unauthorized" }),
       headers: {
         "Access-Control-Allow-Origin": "*",
@@ -114,32 +137,13 @@ describe("delete-project_handler", () => {
   });
 
   test("it should not delete the project -- error 400 (invalid uuid)", async () => {
-    jest.doMock("@aws-sdk/lib-dynamodb", () => {
-      return {
-        DynamoDBDocumentClient: {
-          from: jest.fn().mockImplementation(() => ({
-            send: jest.fn().mockResolvedValue({
-              Item: {
-                apiKeyInfo: {
-                  apiKeyId: "fake-api-key-id",
-                  usagePlanId: "fake-usage-plan-id",
-                },
-              },
-            }),
-          })),
-        },
-        GetCommand: jest.fn(),
-        DeleteCommand: jest.fn(),
-      };
-    });
-
     const event = {
       pathParameters: {
         projectId: "", //invalid uuid
       },
       requestContext: {
         authorizer: {
-          principalId: "1",
+          principalId: userId,
         },
       },
     } as unknown as AuthorizedApiGatewayEvent;
@@ -181,7 +185,7 @@ describe("delete-project_handler", () => {
       },
       requestContext: {
         authorizer: {
-          principalId: "1",
+          principalId: userId,
         },
       },
     } as unknown as AuthorizedApiGatewayEvent;
@@ -221,7 +225,7 @@ describe("delete-project_handler", () => {
       },
       requestContext: {
         authorizer: {
-          principalId: "1",
+          principalId: userId,
         },
       },
     } as unknown as AuthorizedApiGatewayEvent;
@@ -229,5 +233,13 @@ describe("delete-project_handler", () => {
     const { handler } = await import("../../resources/delete_project_handler");
 
     await expect(handler(event)).rejects.toThrow("fake error");
+
+    expect(console.error).toHaveBeenCalledWith(
+      "Failed to delete project",
+      expect.any(Error)
+    );
+    expect(console.error).toHaveBeenCalledWith("User id:", userId);
+
+    expect(console.error).toHaveBeenCalledTimes(2);
   });
 });
