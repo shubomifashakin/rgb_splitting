@@ -41,18 +41,6 @@ const mockImageData = new Uint8Array([
 
 const mockTransformToByteArray = jest.fn().mockResolvedValue(mockImageData);
 
-// const mockGetS3ObjectCommand = jest.fn().mockResolvedValue({
-//   Body: {
-//     transformToByteArray: mockTransformToByteArray,
-//   },
-//   Metadata: {
-//     project_id: fakeProjectId,
-//     user_id: fakeUserId,
-//     grains: JSON.stringify([100]),
-//     channels: JSON.stringify([NormalizedChannels.REDGREENBLUE]),
-//   },
-// });
-
 const equalValuesBucketName = "equal-values";
 const equalValuesButSameImagePresent = "equal-values-but-same-image-present";
 
@@ -250,303 +238,52 @@ function executeMocks() {
       createCanvas: mockCreateCanvas,
     };
   });
-  jest.mock("@aws-sdk/lib-dynamodb", () => {
-    return {
-      DynamoDBDocumentClient: {
-        from: jest.fn().mockImplementation(() => ({
-          send: jest.fn().mockImplementation((command) => {
-            return command;
-          }),
-        })),
-      },
-      PutCommand: mockPutCommand,
-    };
+}
+
+function getShouldSplitExpectations({
+  mockImageKey,
+  toBufferTimes,
+  mockBucketName,
+  clearRectTimes,
+  putImageDataTimes,
+}: {
+  mockImageKey: string;
+  toBufferTimes: number;
+  mockBucketName: string;
+  clearRectTimes: number;
+  putImageDataTimes: number;
+}) {
+  expect(mockGetS3ObjectCommand).toHaveBeenCalledWith({
+    Bucket: mockBucketName,
+    Key: mockImageKey,
   });
 
-  jest.mock("@aws-sdk/client-s3", () => {
-    return {
-      S3Client: jest.fn().mockImplementation(() => ({
-        send: jest.fn().mockImplementation((command) => {
-          return command;
-        }),
-      })),
+  expect(mockTransformToByteArray).toHaveBeenCalledTimes(1);
 
-      GetObjectCommand: mockGetS3ObjectCommand,
-      PutObjectCommand: mockPutS3ObjectCommand,
-    };
-  });
+  expect(mockLoadImage).toHaveBeenCalledTimes(1);
 
-  jest.mock("canvas", () => {
-    return {
-      loadImage: mockLoadImage,
-      ImageData: mockFormImageData,
-      createCanvas: mockCreateCanvas,
-    };
-  });
-  jest.mock("@aws-sdk/lib-dynamodb", () => {
-    return {
-      DynamoDBDocumentClient: {
-        from: jest.fn().mockImplementation(() => ({
-          send: jest.fn().mockImplementation((command) => {
-            return command;
-          }),
-        })),
-      },
-      PutCommand: mockPutCommand,
-    };
-  });
+  expect(mockCreateCanvas).toHaveBeenCalledTimes(1);
+  expect(mockCreateCanvas).toHaveBeenCalledWith(width, height);
 
-  jest.mock("@aws-sdk/client-s3", () => {
-    return {
-      S3Client: jest.fn().mockImplementation(() => ({
-        send: jest.fn().mockImplementation((command) => {
-          return command;
-        }),
-      })),
+  expect(mockGetContext).toHaveBeenCalledTimes(1);
+  expect(mockGetContext).toHaveBeenCalledWith("2d");
 
-      GetObjectCommand: mockGetS3ObjectCommand,
-      PutObjectCommand: mockPutS3ObjectCommand,
-    };
-  });
+  expect(mockDrawImage).toHaveBeenCalledTimes(1);
+  expect(mockDrawImage).toHaveBeenCalledWith({ width, height }, 0, 0);
 
-  jest.mock("canvas", () => {
-    return {
-      loadImage: mockLoadImage,
-      ImageData: mockFormImageData,
-      createCanvas: mockCreateCanvas,
-    };
-  });
-  jest.mock("@aws-sdk/lib-dynamodb", () => {
-    return {
-      DynamoDBDocumentClient: {
-        from: jest.fn().mockImplementation(() => ({
-          send: jest.fn().mockImplementation((command) => {
-            return command;
-          }),
-        })),
-      },
-      PutCommand: mockPutCommand,
-    };
-  });
+  expect(mockGetImageData).toHaveBeenCalledWith(0, 0, width, height);
 
-  jest.mock("@aws-sdk/client-s3", () => {
-    return {
-      S3Client: jest.fn().mockImplementation(() => ({
-        send: jest.fn().mockImplementation((command) => {
-          return command;
-        }),
-      })),
+  expect(mockClearRect).toHaveBeenCalledTimes(clearRectTimes);
+  expect(mockClearRect).toHaveBeenCalledWith(0, 0, width, height);
 
-      GetObjectCommand: mockGetS3ObjectCommand,
-      PutObjectCommand: mockPutS3ObjectCommand,
-    };
-  });
+  expect(mockPutImageData).toHaveBeenCalledTimes(putImageDataTimes);
+  expect(mockPutImageData).toHaveBeenCalledWith(expect.any(Object), 0, 0);
 
-  jest.mock("canvas", () => {
-    return {
-      loadImage: mockLoadImage,
-      ImageData: mockFormImageData,
-      createCanvas: mockCreateCanvas,
-    };
-  });
-  jest.mock("@aws-sdk/lib-dynamodb", () => {
-    return {
-      DynamoDBDocumentClient: {
-        from: jest.fn().mockImplementation(() => ({
-          send: jest.fn().mockImplementation((command) => {
-            return command;
-          }),
-        })),
-      },
-      PutCommand: mockPutCommand,
-    };
-  });
+  expect(mockToBuffer).toHaveBeenCalledTimes(toBufferTimes);
 
-  jest.mock("@aws-sdk/client-s3", () => {
-    return {
-      S3Client: jest.fn().mockImplementation(() => ({
-        send: jest.fn().mockImplementation((command) => {
-          return command;
-        }),
-      })),
+  expect(mockPutCommand).toHaveBeenCalledTimes(1);
 
-      GetObjectCommand: mockGetS3ObjectCommand,
-      PutObjectCommand: mockPutS3ObjectCommand,
-    };
-  });
-
-  jest.mock("canvas", () => {
-    return {
-      loadImage: mockLoadImage,
-      ImageData: mockFormImageData,
-      createCanvas: mockCreateCanvas,
-    };
-  });
-  jest.mock("@aws-sdk/lib-dynamodb", () => {
-    return {
-      DynamoDBDocumentClient: {
-        from: jest.fn().mockImplementation(() => ({
-          send: jest.fn().mockImplementation((command) => {
-            return command;
-          }),
-        })),
-      },
-      PutCommand: mockPutCommand,
-    };
-  });
-
-  jest.mock("@aws-sdk/client-s3", () => {
-    return {
-      S3Client: jest.fn().mockImplementation(() => ({
-        send: jest.fn().mockImplementation((command) => {
-          return command;
-        }),
-      })),
-
-      GetObjectCommand: mockGetS3ObjectCommand,
-      PutObjectCommand: mockPutS3ObjectCommand,
-    };
-  });
-
-  jest.mock("canvas", () => {
-    return {
-      loadImage: mockLoadImage,
-      ImageData: mockFormImageData,
-      createCanvas: mockCreateCanvas,
-    };
-  });
-  jest.mock("@aws-sdk/lib-dynamodb", () => {
-    return {
-      DynamoDBDocumentClient: {
-        from: jest.fn().mockImplementation(() => ({
-          send: jest.fn().mockImplementation((command) => {
-            return command;
-          }),
-        })),
-      },
-      PutCommand: mockPutCommand,
-    };
-  });
-
-  jest.mock("@aws-sdk/client-s3", () => {
-    return {
-      S3Client: jest.fn().mockImplementation(() => ({
-        send: jest.fn().mockImplementation((command) => {
-          return command;
-        }),
-      })),
-
-      GetObjectCommand: mockGetS3ObjectCommand,
-      PutObjectCommand: mockPutS3ObjectCommand,
-    };
-  });
-
-  jest.mock("canvas", () => {
-    return {
-      loadImage: mockLoadImage,
-      ImageData: mockFormImageData,
-      createCanvas: mockCreateCanvas,
-    };
-  });
-  jest.mock("@aws-sdk/lib-dynamodb", () => {
-    return {
-      DynamoDBDocumentClient: {
-        from: jest.fn().mockImplementation(() => ({
-          send: jest.fn().mockImplementation((command) => {
-            return command;
-          }),
-        })),
-      },
-      PutCommand: mockPutCommand,
-    };
-  });
-
-  jest.mock("@aws-sdk/client-s3", () => {
-    return {
-      S3Client: jest.fn().mockImplementation(() => ({
-        send: jest.fn().mockImplementation((command) => {
-          return command;
-        }),
-      })),
-
-      GetObjectCommand: mockGetS3ObjectCommand,
-      PutObjectCommand: mockPutS3ObjectCommand,
-    };
-  });
-
-  jest.mock("canvas", () => {
-    return {
-      loadImage: mockLoadImage,
-      ImageData: mockFormImageData,
-      createCanvas: mockCreateCanvas,
-    };
-  });
-  jest.mock("@aws-sdk/lib-dynamodb", () => {
-    return {
-      DynamoDBDocumentClient: {
-        from: jest.fn().mockImplementation(() => ({
-          send: jest.fn().mockImplementation((command) => {
-            return command;
-          }),
-        })),
-      },
-      PutCommand: mockPutCommand,
-    };
-  });
-
-  jest.mock("@aws-sdk/client-s3", () => {
-    return {
-      S3Client: jest.fn().mockImplementation(() => ({
-        send: jest.fn().mockImplementation((command) => {
-          return command;
-        }),
-      })),
-
-      GetObjectCommand: mockGetS3ObjectCommand,
-      PutObjectCommand: mockPutS3ObjectCommand,
-    };
-  });
-
-  jest.mock("canvas", () => {
-    return {
-      loadImage: mockLoadImage,
-      ImageData: mockFormImageData,
-      createCanvas: mockCreateCanvas,
-    };
-  });
-  jest.mock("@aws-sdk/lib-dynamodb", () => {
-    return {
-      DynamoDBDocumentClient: {
-        from: jest.fn().mockImplementation(() => ({
-          send: jest.fn().mockImplementation((command) => {
-            return command;
-          }),
-        })),
-      },
-      PutCommand: mockPutCommand,
-    };
-  });
-
-  jest.mock("@aws-sdk/client-s3", () => {
-    return {
-      S3Client: jest.fn().mockImplementation(() => ({
-        send: jest.fn().mockImplementation((command) => {
-          return command;
-        }),
-      })),
-
-      GetObjectCommand: mockGetS3ObjectCommand,
-      PutObjectCommand: mockPutS3ObjectCommand,
-    };
-  });
-
-  jest.mock("canvas", () => {
-    return {
-      loadImage: mockLoadImage,
-      ImageData: mockFormImageData,
-      createCanvas: mockCreateCanvas,
-    };
-  });
+  expect(console.log).toHaveBeenLastCalledWith("completed successfully");
 }
 
 describe("splitting handler", () => {
@@ -583,33 +320,13 @@ describe("splitting handler", () => {
 
     await handler(mockEvent as unknown as S3Event);
 
-    expect(mockGetS3ObjectCommand).toHaveBeenCalledWith({
-      Bucket: mockBucketName,
-      Key: mockImageKey,
+    getShouldSplitExpectations({
+      mockBucketName,
+      mockImageKey,
+      toBufferTimes: 1,
+      clearRectTimes: 1,
+      putImageDataTimes: 1,
     });
-
-    expect(mockTransformToByteArray).toHaveBeenCalledTimes(1);
-
-    expect(mockLoadImage).toHaveBeenCalledTimes(1);
-
-    expect(mockCreateCanvas).toHaveBeenCalledTimes(1);
-    expect(mockCreateCanvas).toHaveBeenCalledWith(width, height);
-
-    expect(mockGetContext).toHaveBeenCalledTimes(1);
-    expect(mockGetContext).toHaveBeenCalledWith("2d");
-
-    expect(mockDrawImage).toHaveBeenCalledTimes(1);
-    expect(mockDrawImage).toHaveBeenCalledWith({ width, height }, 0, 0);
-
-    expect(mockGetImageData).toHaveBeenCalledWith(0, 0, width, height);
-
-    expect(mockClearRect).toHaveBeenCalledTimes(1);
-    expect(mockClearRect).toHaveBeenCalledWith(0, 0, width, height);
-
-    expect(mockPutImageData).toHaveBeenCalledTimes(1);
-    expect(mockPutImageData).toHaveBeenCalledWith(expect.any(Object), 0, 0);
-
-    expect(mockToBuffer).toHaveBeenCalledTimes(1);
 
     expect(mockPutS3ObjectCommand).toHaveBeenCalledTimes(1);
     expect(mockPutS3ObjectCommand).toHaveBeenCalledWith({
@@ -619,7 +336,6 @@ describe("splitting handler", () => {
       Key: `${mockImageKey}/${NormalizedChannels.REDGREENBLUE}-${100}.jpg`,
     });
 
-    expect(mockPutCommand).toHaveBeenCalledTimes(1);
     expect(mockPutCommand).toHaveBeenCalledWith({
       TableName: process.env.RESULTS_TABLE_NAME,
       Item: {
@@ -641,8 +357,6 @@ describe("splitting handler", () => {
         createdAt: expect.any(Number),
       },
     });
-
-    expect(console.log).toHaveBeenLastCalledWith("completed successfully");
   });
 
   test("it should split the image -- channels and grains are equal -- same image present", async () => {
@@ -670,33 +384,13 @@ describe("splitting handler", () => {
 
     await handler(mockEvent as unknown as S3Event);
 
-    expect(mockGetS3ObjectCommand).toHaveBeenCalledWith({
-      Bucket: mockBucketName,
-      Key: mockImageKey,
+    getShouldSplitExpectations({
+      mockImageKey,
+      mockBucketName,
+      toBufferTimes: 1,
+      clearRectTimes: 1,
+      putImageDataTimes: 1,
     });
-
-    expect(mockTransformToByteArray).toHaveBeenCalledTimes(1);
-
-    expect(mockLoadImage).toHaveBeenCalledTimes(1);
-
-    expect(mockCreateCanvas).toHaveBeenCalledTimes(1);
-    expect(mockCreateCanvas).toHaveBeenCalledWith(width, height);
-
-    expect(mockGetContext).toHaveBeenCalledTimes(1);
-    expect(mockGetContext).toHaveBeenCalledWith("2d");
-
-    expect(mockDrawImage).toHaveBeenCalledTimes(1);
-    expect(mockDrawImage).toHaveBeenCalledWith({ width, height }, 0, 0);
-
-    expect(mockGetImageData).toHaveBeenCalledWith(0, 0, width, height);
-
-    expect(mockClearRect).toHaveBeenCalledTimes(1);
-    expect(mockClearRect).toHaveBeenCalledWith(0, 0, width, height);
-
-    expect(mockPutImageData).toHaveBeenCalledTimes(1);
-    expect(mockPutImageData).toHaveBeenCalledWith(expect.any(Object), 0, 0);
-
-    expect(mockToBuffer).toHaveBeenCalledTimes(1);
 
     expect(mockPutS3ObjectCommand).toHaveBeenCalledTimes(1);
     expect(mockPutS3ObjectCommand).toHaveBeenCalledWith({
@@ -706,7 +400,6 @@ describe("splitting handler", () => {
       Key: `${mockImageKey}/${NormalizedChannels.REDGREENBLUE}-${100}.jpg`,
     });
 
-    expect(mockPutCommand).toHaveBeenCalledTimes(1);
     expect(mockPutCommand).toHaveBeenCalledWith({
       TableName: process.env.RESULTS_TABLE_NAME,
       Item: {
@@ -728,8 +421,6 @@ describe("splitting handler", () => {
         createdAt: expect.any(Number),
       },
     });
-
-    expect(console.log).toHaveBeenLastCalledWith("completed successfully");
   });
 
   test("it should split the image -- more channels than grains", async () => {
@@ -757,33 +448,13 @@ describe("splitting handler", () => {
 
     await handler(mockEvent as unknown as S3Event);
 
-    expect(mockGetS3ObjectCommand).toHaveBeenCalledWith({
-      Bucket: mockBucketName,
-      Key: mockImageKey,
+    getShouldSplitExpectations({
+      mockImageKey,
+      mockBucketName,
+      toBufferTimes: 3,
+      clearRectTimes: 3,
+      putImageDataTimes: 3,
     });
-
-    expect(mockTransformToByteArray).toHaveBeenCalledTimes(1);
-
-    expect(mockLoadImage).toHaveBeenCalledTimes(1);
-
-    expect(mockCreateCanvas).toHaveBeenCalledTimes(1);
-    expect(mockCreateCanvas).toHaveBeenCalledWith(width, height);
-
-    expect(mockGetContext).toHaveBeenCalledTimes(1);
-    expect(mockGetContext).toHaveBeenCalledWith("2d");
-
-    expect(mockDrawImage).toHaveBeenCalledTimes(1);
-    expect(mockDrawImage).toHaveBeenCalledWith({ width, height }, 0, 0);
-
-    expect(mockGetImageData).toHaveBeenCalledWith(0, 0, width, height);
-
-    expect(mockClearRect).toHaveBeenCalledTimes(3);
-    expect(mockClearRect).toHaveBeenCalledWith(0, 0, width, height);
-
-    expect(mockPutImageData).toHaveBeenCalledTimes(3);
-    expect(mockPutImageData).toHaveBeenCalledWith(expect.any(Object), 0, 0);
-
-    expect(mockToBuffer).toHaveBeenCalledTimes(3);
 
     expect(mockPutS3ObjectCommand).toHaveBeenCalledTimes(3);
     expect(mockPutS3ObjectCommand).toHaveBeenCalledWith({
@@ -807,7 +478,6 @@ describe("splitting handler", () => {
       Key: `${mockImageKey}/${NormalizedChannels.GREEN}-${0}.jpg`,
     });
 
-    expect(mockPutCommand).toHaveBeenCalledTimes(1);
     expect(mockPutCommand).toHaveBeenCalledWith({
       TableName: process.env.RESULTS_TABLE_NAME,
       Item: {
@@ -847,8 +517,6 @@ describe("splitting handler", () => {
         createdAt: expect.any(Number),
       },
     });
-
-    expect(console.log).toHaveBeenLastCalledWith("completed successfully");
   });
 
   test("it should split the image -- more channels than grains -- same image present", async () => {
@@ -876,33 +544,13 @@ describe("splitting handler", () => {
 
     await handler(mockEvent as unknown as S3Event);
 
-    expect(mockGetS3ObjectCommand).toHaveBeenCalledWith({
-      Bucket: mockBucketName,
-      Key: mockImageKey,
+    getShouldSplitExpectations({
+      mockImageKey,
+      mockBucketName,
+      toBufferTimes: 2,
+      clearRectTimes: 2,
+      putImageDataTimes: 2,
     });
-
-    expect(mockTransformToByteArray).toHaveBeenCalledTimes(1);
-
-    expect(mockLoadImage).toHaveBeenCalledTimes(1);
-
-    expect(mockCreateCanvas).toHaveBeenCalledTimes(1);
-    expect(mockCreateCanvas).toHaveBeenCalledWith(width, height);
-
-    expect(mockGetContext).toHaveBeenCalledTimes(1);
-    expect(mockGetContext).toHaveBeenCalledWith("2d");
-
-    expect(mockDrawImage).toHaveBeenCalledTimes(1);
-    expect(mockDrawImage).toHaveBeenCalledWith({ width, height }, 0, 0);
-
-    expect(mockGetImageData).toHaveBeenCalledWith(0, 0, width, height);
-
-    expect(mockClearRect).toHaveBeenCalledTimes(2);
-    expect(mockClearRect).toHaveBeenCalledWith(0, 0, width, height);
-
-    expect(mockPutImageData).toHaveBeenCalledTimes(2);
-    expect(mockPutImageData).toHaveBeenCalledWith(expect.any(Object), 0, 0);
-
-    expect(mockToBuffer).toHaveBeenCalledTimes(2);
 
     expect(mockPutS3ObjectCommand).toHaveBeenCalledTimes(2);
     expect(mockPutS3ObjectCommand).toHaveBeenCalledWith({
@@ -919,7 +567,6 @@ describe("splitting handler", () => {
       Key: `${mockImageKey}/${NormalizedChannels.GREEN}-${0}.jpg`,
     });
 
-    expect(mockPutCommand).toHaveBeenCalledTimes(1);
     expect(mockPutCommand).toHaveBeenCalledWith({
       TableName: process.env.RESULTS_TABLE_NAME,
       Item: {
@@ -950,8 +597,6 @@ describe("splitting handler", () => {
         createdAt: expect.any(Number),
       },
     });
-
-    expect(console.log).toHaveBeenLastCalledWith("completed successfully");
   });
 
   test("it should split the image -- more grains than channels", async () => {
@@ -979,33 +624,13 @@ describe("splitting handler", () => {
 
     await handler(mockEvent as unknown as S3Event);
 
-    expect(mockGetS3ObjectCommand).toHaveBeenCalledWith({
-      Bucket: mockBucketName,
-      Key: mockImageKey,
+    getShouldSplitExpectations({
+      mockImageKey,
+      mockBucketName,
+      toBufferTimes: 2,
+      clearRectTimes: 2,
+      putImageDataTimes: 2,
     });
-
-    expect(mockTransformToByteArray).toHaveBeenCalledTimes(1);
-
-    expect(mockLoadImage).toHaveBeenCalledTimes(1);
-
-    expect(mockCreateCanvas).toHaveBeenCalledTimes(1);
-    expect(mockCreateCanvas).toHaveBeenCalledWith(width, height);
-
-    expect(mockGetContext).toHaveBeenCalledTimes(1);
-    expect(mockGetContext).toHaveBeenCalledWith("2d");
-
-    expect(mockDrawImage).toHaveBeenCalledTimes(1);
-    expect(mockDrawImage).toHaveBeenCalledWith({ width, height }, 0, 0);
-
-    expect(mockGetImageData).toHaveBeenCalledWith(0, 0, width, height);
-
-    expect(mockClearRect).toHaveBeenCalledTimes(2);
-    expect(mockClearRect).toHaveBeenCalledWith(0, 0, width, height);
-
-    expect(mockPutImageData).toHaveBeenCalledTimes(2);
-    expect(mockPutImageData).toHaveBeenCalledWith(expect.any(Object), 0, 0);
-
-    expect(mockToBuffer).toHaveBeenCalledTimes(2);
 
     expect(mockPutS3ObjectCommand).toHaveBeenCalledTimes(2);
     expect(mockPutS3ObjectCommand).toHaveBeenCalledWith({
@@ -1022,7 +647,6 @@ describe("splitting handler", () => {
       Key: `${mockImageKey}/${NormalizedChannels.RED}-${200}.jpg`,
     });
 
-    expect(mockPutCommand).toHaveBeenCalledTimes(1);
     expect(mockPutCommand).toHaveBeenCalledWith({
       TableName: process.env.RESULTS_TABLE_NAME,
       Item: {
@@ -1053,8 +677,6 @@ describe("splitting handler", () => {
         createdAt: expect.any(Number),
       },
     });
-
-    expect(console.log).toHaveBeenLastCalledWith("completed successfully");
   });
 
   test("it should split the image -- more grains than channels -- same image present", async () => {
@@ -1082,33 +704,13 @@ describe("splitting handler", () => {
 
     await handler(mockEvent as unknown as S3Event);
 
-    expect(mockGetS3ObjectCommand).toHaveBeenCalledWith({
-      Bucket: mockBucketName,
-      Key: mockImageKey,
+    getShouldSplitExpectations({
+      mockImageKey,
+      mockBucketName,
+      toBufferTimes: 1,
+      clearRectTimes: 1,
+      putImageDataTimes: 1,
     });
-
-    expect(mockTransformToByteArray).toHaveBeenCalledTimes(1);
-
-    expect(mockLoadImage).toHaveBeenCalledTimes(1);
-
-    expect(mockCreateCanvas).toHaveBeenCalledTimes(1);
-    expect(mockCreateCanvas).toHaveBeenCalledWith(width, height);
-
-    expect(mockGetContext).toHaveBeenCalledTimes(1);
-    expect(mockGetContext).toHaveBeenCalledWith("2d");
-
-    expect(mockDrawImage).toHaveBeenCalledTimes(1);
-    expect(mockDrawImage).toHaveBeenCalledWith({ width, height }, 0, 0);
-
-    expect(mockGetImageData).toHaveBeenCalledWith(0, 0, width, height);
-
-    expect(mockClearRect).toHaveBeenCalledTimes(1);
-    expect(mockClearRect).toHaveBeenCalledWith(0, 0, width, height);
-
-    expect(mockPutImageData).toHaveBeenCalledTimes(1);
-    expect(mockPutImageData).toHaveBeenCalledWith(expect.any(Object), 0, 0);
-
-    expect(mockToBuffer).toHaveBeenCalledTimes(1);
 
     expect(mockPutS3ObjectCommand).toHaveBeenCalledTimes(1);
     expect(mockPutS3ObjectCommand).toHaveBeenCalledWith({
@@ -1118,7 +720,6 @@ describe("splitting handler", () => {
       Key: `${mockImageKey}/${NormalizedChannels.REDGREEN}-${100}.jpg`,
     });
 
-    expect(mockPutCommand).toHaveBeenCalledTimes(1);
     expect(mockPutCommand).toHaveBeenCalledWith({
       TableName: process.env.RESULTS_TABLE_NAME,
       Item: {
@@ -1140,8 +741,6 @@ describe("splitting handler", () => {
         createdAt: expect.any(Number),
       },
     });
-
-    expect(console.log).toHaveBeenLastCalledWith("completed successfully");
   });
 
   test("it should split the image -- one channel more grains", async () => {
@@ -1169,33 +768,13 @@ describe("splitting handler", () => {
 
     await handler(mockEvent as unknown as S3Event);
 
-    expect(mockGetS3ObjectCommand).toHaveBeenCalledWith({
-      Bucket: mockBucketName,
-      Key: mockImageKey,
+    getShouldSplitExpectations({
+      mockImageKey,
+      mockBucketName,
+      toBufferTimes: 2,
+      clearRectTimes: 2,
+      putImageDataTimes: 2,
     });
-
-    expect(mockTransformToByteArray).toHaveBeenCalledTimes(1);
-
-    expect(mockLoadImage).toHaveBeenCalledTimes(1);
-
-    expect(mockCreateCanvas).toHaveBeenCalledTimes(1);
-    expect(mockCreateCanvas).toHaveBeenCalledWith(width, height);
-
-    expect(mockGetContext).toHaveBeenCalledTimes(1);
-    expect(mockGetContext).toHaveBeenCalledWith("2d");
-
-    expect(mockDrawImage).toHaveBeenCalledTimes(1);
-    expect(mockDrawImage).toHaveBeenCalledWith({ width, height }, 0, 0);
-
-    expect(mockGetImageData).toHaveBeenCalledWith(0, 0, width, height);
-
-    expect(mockClearRect).toHaveBeenCalledTimes(2);
-    expect(mockClearRect).toHaveBeenCalledWith(0, 0, width, height);
-
-    expect(mockPutImageData).toHaveBeenCalledTimes(2);
-    expect(mockPutImageData).toHaveBeenCalledWith(expect.any(Object), 0, 0);
-
-    expect(mockToBuffer).toHaveBeenCalledTimes(2);
 
     expect(mockPutS3ObjectCommand).toHaveBeenCalledTimes(2);
     expect(mockPutS3ObjectCommand).toHaveBeenCalledWith({
@@ -1212,7 +791,6 @@ describe("splitting handler", () => {
       Key: `${mockImageKey}/${NormalizedChannels.BLUE}-${200}.jpg`,
     });
 
-    expect(mockPutCommand).toHaveBeenCalledTimes(1);
     expect(mockPutCommand).toHaveBeenCalledWith({
       TableName: process.env.RESULTS_TABLE_NAME,
       Item: {
@@ -1243,8 +821,6 @@ describe("splitting handler", () => {
         createdAt: expect.any(Number),
       },
     });
-
-    expect(console.log).toHaveBeenLastCalledWith("completed successfully");
   });
 
   test("it should split the image -- one channel more grains -- same image present", async () => {
@@ -1272,33 +848,13 @@ describe("splitting handler", () => {
 
     await handler(mockEvent as unknown as S3Event);
 
-    expect(mockGetS3ObjectCommand).toHaveBeenCalledWith({
-      Bucket: mockBucketName,
-      Key: mockImageKey,
+    getShouldSplitExpectations({
+      mockImageKey,
+      mockBucketName,
+      toBufferTimes: 1,
+      clearRectTimes: 1,
+      putImageDataTimes: 1,
     });
-
-    expect(mockTransformToByteArray).toHaveBeenCalledTimes(1);
-
-    expect(mockLoadImage).toHaveBeenCalledTimes(1);
-
-    expect(mockCreateCanvas).toHaveBeenCalledTimes(1);
-    expect(mockCreateCanvas).toHaveBeenCalledWith(width, height);
-
-    expect(mockGetContext).toHaveBeenCalledTimes(1);
-    expect(mockGetContext).toHaveBeenCalledWith("2d");
-
-    expect(mockDrawImage).toHaveBeenCalledTimes(1);
-    expect(mockDrawImage).toHaveBeenCalledWith({ width, height }, 0, 0);
-
-    expect(mockGetImageData).toHaveBeenCalledWith(0, 0, width, height);
-
-    expect(mockClearRect).toHaveBeenCalledTimes(1);
-    expect(mockClearRect).toHaveBeenCalledWith(0, 0, width, height);
-
-    expect(mockPutImageData).toHaveBeenCalledTimes(1);
-    expect(mockPutImageData).toHaveBeenCalledWith(expect.any(Object), 0, 0);
-
-    expect(mockToBuffer).toHaveBeenCalledTimes(1);
 
     expect(mockPutS3ObjectCommand).toHaveBeenCalledTimes(1);
 
@@ -1309,7 +865,6 @@ describe("splitting handler", () => {
       Key: `${mockImageKey}/${NormalizedChannels.REDGREENBLUE}-${200}.jpg`,
     });
 
-    expect(mockPutCommand).toHaveBeenCalledTimes(1);
     expect(mockPutCommand).toHaveBeenCalledWith({
       TableName: process.env.RESULTS_TABLE_NAME,
       Item: {
@@ -1331,8 +886,6 @@ describe("splitting handler", () => {
         createdAt: expect.any(Number),
       },
     });
-
-    expect(console.log).toHaveBeenLastCalledWith("completed successfully");
   });
 
   test("it should split the image -- one grain more channels", async () => {
@@ -1360,33 +913,13 @@ describe("splitting handler", () => {
 
     await handler(mockEvent as unknown as S3Event);
 
-    expect(mockGetS3ObjectCommand).toHaveBeenCalledWith({
-      Bucket: mockBucketName,
-      Key: mockImageKey,
+    getShouldSplitExpectations({
+      mockImageKey,
+      mockBucketName,
+      toBufferTimes: 2,
+      clearRectTimes: 2,
+      putImageDataTimes: 2,
     });
-
-    expect(mockTransformToByteArray).toHaveBeenCalledTimes(1);
-
-    expect(mockLoadImage).toHaveBeenCalledTimes(1);
-
-    expect(mockCreateCanvas).toHaveBeenCalledTimes(1);
-    expect(mockCreateCanvas).toHaveBeenCalledWith(width, height);
-
-    expect(mockGetContext).toHaveBeenCalledTimes(1);
-    expect(mockGetContext).toHaveBeenCalledWith("2d");
-
-    expect(mockDrawImage).toHaveBeenCalledTimes(1);
-    expect(mockDrawImage).toHaveBeenCalledWith({ width, height }, 0, 0);
-
-    expect(mockGetImageData).toHaveBeenCalledWith(0, 0, width, height);
-
-    expect(mockClearRect).toHaveBeenCalledTimes(2);
-    expect(mockClearRect).toHaveBeenCalledWith(0, 0, width, height);
-
-    expect(mockPutImageData).toHaveBeenCalledTimes(2);
-    expect(mockPutImageData).toHaveBeenCalledWith(expect.any(Object), 0, 0);
-
-    expect(mockToBuffer).toHaveBeenCalledTimes(2);
 
     expect(mockPutS3ObjectCommand).toHaveBeenCalledTimes(2);
     expect(mockPutS3ObjectCommand).toHaveBeenCalledWith({
@@ -1403,7 +936,6 @@ describe("splitting handler", () => {
       Key: `${mockImageKey}/${NormalizedChannels.GREENBLUE}-${100}.jpg`,
     });
 
-    expect(mockPutCommand).toHaveBeenCalledTimes(1);
     expect(mockPutCommand).toHaveBeenCalledWith({
       TableName: process.env.RESULTS_TABLE_NAME,
       Item: {
@@ -1434,8 +966,6 @@ describe("splitting handler", () => {
         createdAt: expect.any(Number),
       },
     });
-
-    expect(console.log).toHaveBeenLastCalledWith("completed successfully");
   });
 
   test("it should split the image -- one grain more channels -- but same image present", async () => {
@@ -1463,33 +993,13 @@ describe("splitting handler", () => {
 
     await handler(mockEvent as unknown as S3Event);
 
-    expect(mockGetS3ObjectCommand).toHaveBeenCalledWith({
-      Bucket: mockBucketName,
-      Key: mockImageKey,
+    getShouldSplitExpectations({
+      mockImageKey,
+      mockBucketName,
+      toBufferTimes: 1,
+      clearRectTimes: 1,
+      putImageDataTimes: 1,
     });
-
-    expect(mockTransformToByteArray).toHaveBeenCalledTimes(1);
-
-    expect(mockLoadImage).toHaveBeenCalledTimes(1);
-
-    expect(mockCreateCanvas).toHaveBeenCalledTimes(1);
-    expect(mockCreateCanvas).toHaveBeenCalledWith(width, height);
-
-    expect(mockGetContext).toHaveBeenCalledTimes(1);
-    expect(mockGetContext).toHaveBeenCalledWith("2d");
-
-    expect(mockDrawImage).toHaveBeenCalledTimes(1);
-    expect(mockDrawImage).toHaveBeenCalledWith({ width, height }, 0, 0);
-
-    expect(mockGetImageData).toHaveBeenCalledWith(0, 0, width, height);
-
-    expect(mockClearRect).toHaveBeenCalledTimes(1);
-    expect(mockClearRect).toHaveBeenCalledWith(0, 0, width, height);
-
-    expect(mockPutImageData).toHaveBeenCalledTimes(1);
-    expect(mockPutImageData).toHaveBeenCalledWith(expect.any(Object), 0, 0);
-
-    expect(mockToBuffer).toHaveBeenCalledTimes(1);
 
     expect(mockPutS3ObjectCommand).toHaveBeenCalledTimes(1);
     expect(mockPutS3ObjectCommand).toHaveBeenCalledWith({
@@ -1499,7 +1009,6 @@ describe("splitting handler", () => {
       Key: `${mockImageKey}/${NormalizedChannels.REDGREEN}-${0}.jpg`,
     });
 
-    expect(mockPutCommand).toHaveBeenCalledTimes(1);
     expect(mockPutCommand).toHaveBeenCalledWith({
       TableName: process.env.RESULTS_TABLE_NAME,
       Item: {
@@ -1521,8 +1030,6 @@ describe("splitting handler", () => {
         createdAt: expect.any(Number),
       },
     });
-
-    expect(console.log).toHaveBeenLastCalledWith("completed successfully");
   });
 
   test("it should throw an error because no records were found", async () => {
