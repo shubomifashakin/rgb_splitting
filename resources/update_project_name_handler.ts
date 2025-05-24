@@ -28,11 +28,11 @@ export async function handler(event: AuthorizedApiGatewayEvent) {
     const userId = event.requestContext.authorizer?.principalId;
 
     if (!userId) {
-      console.log("Unauthorized");
+      console.error("Unauthorized");
 
       return {
         headers,
-        statusCode: 400,
+        statusCode: 401,
         body: JSON.stringify({ message: "Unauthorized" }),
       };
     }
