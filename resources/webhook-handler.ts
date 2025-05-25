@@ -50,7 +50,7 @@ let paymentGatewayWebhookVerifierSecret:
   | GetSecretValueCommandOutput
   | undefined;
 
-export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
+export const handler = async (event: APIGatewayProxyEventV2) => {
   if (!event.body) {
     return {
       statusCode: 400,
@@ -97,12 +97,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     ) {
       console.error("Signature does not match");
 
-      return {
-        statusCode: 400,
-        body: JSON.stringify({
-          message: "Bad Request - Invalid Signature",
-        }),
-      };
+      throw new Error("Signature does not match");
     }
 
     const {
@@ -117,7 +112,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
       throw new Error("WEBHOOK EVENT SCHEMA VALIDATION FAILED");
     }
 
-    console.info("verified webhook event data successfully");
+    console.log("verified webhook event data successfully");
 
     if (
       webHookEvent.event === "charge.completed" &&
@@ -228,7 +223,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
         })
       );
 
-      console.info("completed successfully");
+      console.log("completed successfully");
     }
 
     return {
