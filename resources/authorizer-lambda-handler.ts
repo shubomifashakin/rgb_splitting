@@ -28,23 +28,21 @@ export const handler: Handler = async (
 ) => {
   const authToken = event.authorizationToken;
 
+  console.log(event);
+
   if (!authToken) {
-    console.error("NO AUTHORIZATION TOKEN PROVIDED");
+    console.log("NO AUTHORIZATION TOKEN PROVIDED");
 
     return {
-      statusCode: 400,
+      statusCode: 401,
       body: JSON.stringify({
-        message: "Authorization Token Not Provided",
+        message: "Unauthorized",
         status: "fail",
       }),
     };
   }
 
   const token = authToken.split(" ")[1];
-
-  if (typeof token !== "string") {
-    return { statusCode: 400, body: "Bad Request - Invalid Token" };
-  }
 
   try {
     if (!publicKey) {
@@ -56,7 +54,7 @@ export const handler: Handler = async (
     }
 
     if (!publicKey.SecretString) {
-      console.log("Public key does not exist");
+      console.error("Public key does not exist");
 
       return { statusCode: 500, body: JSON.stringify("Internal Server Error") };
     }
@@ -79,7 +77,7 @@ export const handler: Handler = async (
       );
     }
   } catch (error: unknown) {
-    console.log(error);
+    console.error(error);
 
     return { statusCode: 500, body: JSON.stringify("Internal Server Error") };
   }

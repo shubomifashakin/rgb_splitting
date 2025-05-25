@@ -1,7 +1,7 @@
 import { Context } from "aws-lambda";
-import { handler } from "../../resources/authorizer-lambda-handler";
 
-import * as jwt from "jsonwebtoken";
+console.log = jest.fn();
+console.error = jest.fn();
 
 jest.mock("@aws-sdk/client-secrets-manager", () => {
   return {
@@ -18,28 +18,41 @@ jest.mock("@aws-sdk/client-secrets-manager", () => {
 describe("authorizer lambda handler", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.resetModules();
   });
 
-  test("it allow access to the arn", async () => {
+  test("it allows access to the arn", async () => {
     const event = {
       authorizationToken: "Bearer fake-token",
       methodArn: "fake-method-arn",
     };
 
-    jest.spyOn(jwt, "verify").mockImplementation(() => {
+    const mockVerifyJwt = jest.fn().mockImplementation(() => {
       return { sub: "fake-sub" };
+    });
+
+    jest.mock("jsonwebtoken", () => {
+      return { verify: mockVerifyJwt };
     });
 
     const context = {};
 
     const callback = jest.fn();
 
+    const { handler } = await import(
+      "../../resources/authorizer-lambda-handler"
+    );
+
     await handler(event, context as Context, callback);
 
-    expect(jwt.verify).toHaveBeenCalledTimes(1);
-    expect(jwt.verify).toHaveBeenCalledWith("fake-token", "fake-public-key", {
-      algorithms: ["RS256"],
-    });
+    expect(mockVerifyJwt).toHaveBeenCalledTimes(1);
+    expect(mockVerifyJwt).toHaveBeenCalledWith(
+      "fake-token",
+      "fake-public-key",
+      {
+        algorithms: ["RS256"],
+      }
+    );
 
     expect(callback).toHaveBeenCalledTimes(1);
     expect(callback).toHaveBeenCalledWith(null, {
@@ -57,26 +70,38 @@ describe("authorizer lambda handler", () => {
     });
   });
 
-  test("it should deny access to the arn", async () => {
+  test("it should deny access to the arn due to missing jwt claims", async () => {
     const event = {
       authorizationToken: "Bearer fake-token",
       methodArn: "fake-method-arn",
     };
 
-    jest.spyOn(jwt, "verify").mockImplementation(() => {
+    const mockVerifyJwt = jest.fn().mockImplementation(() => {
       return { sub: "" };
+    });
+
+    jest.mock("jsonwebtoken", () => {
+      return { verify: mockVerifyJwt };
     });
 
     const context = {};
 
     const callback = jest.fn();
 
+    const { handler } = await import(
+      "../../resources/authorizer-lambda-handler"
+    );
+
     await handler(event, context as Context, callback);
 
-    expect(jwt.verify).toHaveBeenCalledTimes(1);
-    expect(jwt.verify).toHaveBeenCalledWith("fake-token", "fake-public-key", {
-      algorithms: ["RS256"],
-    });
+    expect(mockVerifyJwt).toHaveBeenCalledTimes(1);
+    expect(mockVerifyJwt).toHaveBeenCalledWith(
+      "fake-token",
+      "fake-public-key",
+      {
+        algorithms: ["RS256"],
+      }
+    );
 
     expect(callback).toHaveBeenCalledTimes(1);
     expect(callback).toHaveBeenCalledWith(null, {
@@ -94,7 +119,44 @@ describe("authorizer lambda handler", () => {
     });
   });
 
-  test("it should return a 400 error", async () => {
+  test("it should deny access to the arn due to missing secret", async () => {
+    const event = {
+      authorizationToken: "Bearer fake-token",
+      methodArn: "fake-method-arn",
+    };
+
+    jest.mock("@aws-sdk/client-secrets-manager", () => {
+      return {
+        SecretsManagerClient: jest.fn().mockImplementation(() => ({
+          send: jest.fn().mockResolvedValue({
+            SecretString: null,
+          }),
+        })),
+        GetSecretValueCommand: jest.fn(),
+        GetSecretValueCommandOutput: jest.fn(),
+      };
+    });
+
+    const context = {};
+
+    const callback = jest.fn();
+
+    const { handler } = await import(
+      "../../resources/authorizer-lambda-handler"
+    );
+
+    const res = await handler(event, context as Context, callback);
+
+    expect(console.error).toHaveBeenCalledTimes(1);
+    expect(console.error).toHaveBeenCalledWith("Public key does not exist");
+
+    expect(res).toEqual({
+      statusCode: 500,
+      body: JSON.stringify("Internal Server Error"),
+    });
+  });
+
+  test("it should return a 401 error due to missing authorization token", async () => {
     const event = {
       authorizationToken: "",
       methodArn: "fake-method-arn",
@@ -104,14 +166,22 @@ describe("authorizer lambda handler", () => {
 
     const callback = jest.fn();
 
+    const { handler } = await import(
+      "../../resources/authorizer-lambda-handler"
+    );
+
     const res = await handler(event, context as Context, callback);
 
-    console.log(res);
+    expect(console.log).toHaveBeenCalledTimes(2);
+    expect(console.log).toHaveBeenCalledWith(event);
+    expect(console.log).toHaveBeenLastCalledWith(
+      "NO AUTHORIZATION TOKEN PROVIDED"
+    );
 
     expect(res).toEqual({
-      statusCode: 400,
+      statusCode: 401,
       body: JSON.stringify({
-        message: "Authorization Token Not Provided",
+        message: "Unauthorized",
         status: "fail",
       }),
     });
@@ -123,15 +193,38 @@ describe("authorizer lambda handler", () => {
       methodArn: "fake-method-arn",
     };
 
-    jest.spyOn(jwt, "verify").mockImplementation(() => {
+    jest.mock("@aws-sdk/client-secrets-manager", () => {
+      return {
+        SecretsManagerClient: jest.fn().mockImplementation(() => ({
+          send: jest.fn().mockResolvedValue({
+            SecretString: "null",
+          }),
+        })),
+        GetSecretValueCommand: jest.fn(),
+        GetSecretValueCommandOutput: jest.fn(),
+      };
+    });
+
+    const mockVerifyJwt = jest.fn().mockImplementation(() => {
       throw new Error("Invalid Token");
+    });
+
+    jest.mock("jsonwebtoken", () => {
+      return { verify: mockVerifyJwt };
     });
 
     const context = {};
 
     const callback = jest.fn();
 
+    const { handler } = await import(
+      "../../resources/authorizer-lambda-handler"
+    );
+
     const res = await handler(event, context as Context, callback);
+
+    expect(console.error).toHaveBeenCalledTimes(1);
+    expect(console.error).toHaveBeenCalledWith(expect.any(Error));
 
     expect(res).toEqual({
       statusCode: 500,
