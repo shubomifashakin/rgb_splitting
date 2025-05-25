@@ -1,5 +1,6 @@
 import { APIGatewayProxyEventV2 } from "aws-lambda";
 import { planTypeToStatus, PROJECT_STATUS } from "../../helpers/constants";
+import { NotFoundException } from "@aws-sdk/client-api-gateway";
 
 global.fetch = jest.fn();
 
@@ -10,7 +11,7 @@ const fakeUserId = "8b7e0e3c-3f4e-4868-8f06-8e8a3f5c51f2";
 const fakeProjectId = "e7d9f390-3c4b-4d2c-97a0-bc0fa03e1f8a";
 const fakeUsagePlanId = "e3d9f390-3c4b-4d2c-97a0-bc0fa03e1f8a";
 
-const fakeCreatedApikey = {
+const fakeApiKeyInfo = {
   id: "e7d9f390-3c4b-4d2c-97a0-bc0fa03e1f8a",
   value: "e7d9f390-3c4b-4d2c-97a0-bc0fa03e1f8a",
 };
@@ -19,7 +20,8 @@ const planName = "pro";
 const usersEmail = "test@example.com";
 const fakeProjectName = "test project";
 
-const realEvent = {
+const eventId = "e7d9f390-3c4b-4d2c-97a0-bc0fa03e1f8a";
+const fakeEvent = {
   body: JSON.stringify({
     meta_data: {
       userId: fakeUserId,
@@ -30,7 +32,7 @@ const realEvent = {
     },
     event: "charge.completed",
     data: {
-      id: "e7d9f390-3c4b-4d2c-97a0-bc0fa03e1f8a",
+      id: eventId,
       status: "successful",
       customer: {
         email: usersEmail,
@@ -113,7 +115,7 @@ describe("webhook handler", () => {
     });
 
     const mockCreateApiKeyCommand = jest.fn().mockImplementation(() => {
-      return fakeCreatedApikey;
+      return fakeApiKeyInfo;
     });
 
     const mockCreateUsagePlanKeyCommand = jest.fn();
@@ -147,7 +149,7 @@ describe("webhook handler", () => {
 
     const { handler } = await import("../../resources/webhook-handler");
 
-    const event = realEvent;
+    const event = fakeEvent;
 
     const res = await handler(event);
 
@@ -193,7 +195,7 @@ describe("webhook handler", () => {
     expect(mockCreateUsagePlanKeyCommand).toHaveBeenCalledTimes(1);
     expect(mockCreateUsagePlanKeyCommand).toHaveBeenCalledWith({
       usagePlanId: fakeUsagePlanId,
-      keyId: fakeCreatedApikey.id,
+      keyId: fakeApiKeyInfo.id,
       keyType: "API_KEY",
     });
 
@@ -205,7 +207,7 @@ describe("webhook handler", () => {
         userId: fakeUserId,
         projectId: fakeProjectId,
         apiKeyInfo: {
-          apiKeyId: fakeCreatedApikey.id,
+          apiKeyId: fakeApiKeyInfo.id,
           usagePlanId: fakeUsagePlanId,
         },
         currentPlan: planName,
@@ -214,7 +216,7 @@ describe("webhook handler", () => {
           cardToken: fakeCardToken,
           cardExpiry: fakeCardExpiry,
         },
-        apiKey: fakeCreatedApikey.value,
+        apiKey: fakeApiKeyInfo.value,
         nextPaymentDate: expect.any(Number),
         sub_status: planTypeToStatus[planName],
         currentBillingDate: expect.any(Number),
@@ -236,12 +238,12 @@ describe("webhook handler", () => {
     });
   });
 
-  test("it should update an existing disabled project", async () => {
+  test("it should update an reactivate the apikey if the project was cancelled previously", async () => {
     const mockUpdateCommand = jest.fn();
     const mockGetCommand = jest.fn().mockResolvedValue({
       Item: {
         apiKeyInfo: {
-          apiKeyId: fakeCreatedApikey.id,
+          apiKeyId: fakeApiKeyInfo.id,
           usagePlanId: fakeUsagePlanId,
         },
         sub_status: PROJECT_STATUS.Inactive,
@@ -320,7 +322,7 @@ describe("webhook handler", () => {
 
     const { handler } = await import("../../resources/webhook-handler");
 
-    const event = realEvent;
+    const event = fakeEvent;
 
     const res = await handler(event);
 
@@ -340,12 +342,16 @@ describe("webhook handler", () => {
       "verified webhook event data successfully"
     );
 
-    expect(mockedFetch).toHaveBeenCalledWith(expect.any(String), {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${paymentSecret}`,
-      },
-    });
+    expect(mockedFetch).toHaveBeenCalledTimes(1);
+    expect(mockedFetch).toHaveBeenCalledWith(
+      `${process.env.PAYMENT_GATEWAY_URL}/transactions/${eventId}/verify`,
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${paymentSecret}`,
+        },
+      }
+    );
 
     expect(mockGetCommand).toHaveBeenCalledTimes(1);
     expect(mockGetCommand).toHaveBeenCalledWith({
@@ -359,8 +365,208 @@ describe("webhook handler", () => {
 
     expect(mockUpdateApiKeyCommand).toHaveBeenCalledTimes(1);
     expect(mockUpdateApiKeyCommand).toHaveBeenCalledWith({
-      apiKey: fakeCreatedApikey.id,
+      apiKey: fakeApiKeyInfo.id,
       patchOperations: [{ op: "replace", path: "/enabled", value: "true" }],
+    });
+
+    expect(mockUpdateCommand).toHaveBeenCalledTimes(1);
+    expect(mockUpdateCommand).toHaveBeenCalledWith({
+      TableName: process.env.TABLE_NAME!,
+      Key: {
+        projectId: fakeProjectId,
+        userId: fakeUserId,
+      },
+      UpdateExpression:
+        "set nextPaymentDate = :currentTimestamp, currentBillingDate = :currentBillingDate, apiKeyInfo.usagePlanId = :usagePlanId, currentPlan = :planName, cardTokenInfo.cardToken = :cardToken, cardTokenInfo.cardExpiry = :cardExpiry, sub_status = :sub_status",
+      ExpressionAttributeValues: {
+        ":sub_status": planTypeToStatus[planName],
+        ":planName": planName,
+        ":usagePlanId": fakeUsagePlanId,
+        ":cardToken": fakeCardToken,
+        ":cardExpiry": fakeCardExpiry,
+        ":currentBillingDate": expect.any(Number),
+        ":currentTimestamp": expect.any(Number),
+      },
+    });
+
+    expect(console.log).toHaveBeenLastCalledWith("completed successfully");
+
+    expect(res).toEqual({
+      statusCode: 200,
+      body: JSON.stringify({ message: "Api key generated" }),
+    });
+  });
+
+  test("it should migrate the apikey to the new usage plan that was paid for", async () => {
+    const oldUsagePlanId = "123e4567-e89b-12d3-a456-426614174000"; //old usage plan id
+
+    const mockUpdateCommand = jest.fn();
+    const mockGetCommand = jest.fn().mockResolvedValue({
+      Item: {
+        apiKeyInfo: {
+          apiKeyId: fakeApiKeyInfo.id,
+          usagePlanId: oldUsagePlanId,
+        },
+        sub_status: PROJECT_STATUS.ActivePro,
+      },
+    });
+
+    jest.mock("@aws-sdk/lib-dynamodb", () => {
+      return {
+        DynamoDBDocumentClient: {
+          from: jest.fn().mockImplementation(() => ({
+            send: jest.fn().mockImplementation((command) => {
+              return command;
+            }),
+          })),
+        },
+        GetCommand: mockGetCommand,
+        UpdateCommand: mockUpdateCommand,
+      };
+    });
+
+    const mockGetSecretValueCommand = jest
+      .fn()
+      .mockImplementation((commandParams) => {
+        if (commandParams.SecretId === process.env.PAYMENT_SECRET_NAME) {
+          return {
+            SecretString: paymentSecret,
+          };
+        }
+
+        if (commandParams.SecretId === process.env.WEBHOOK_SECRET_NAME) {
+          return {
+            SecretString: webHookSecret,
+          };
+        }
+
+        throw new Error("Secret not found");
+      });
+
+    jest.mock("@aws-sdk/client-secrets-manager", () => {
+      return {
+        SecretsManagerClient: jest.fn().mockImplementation(() => ({
+          send: jest.fn().mockImplementation((command) => {
+            return command;
+          }),
+        })),
+        GetSecretValueCommand: mockGetSecretValueCommand,
+      };
+    });
+
+    const mockUpdateApiKeyCommand = jest.fn();
+    const mockGetUsagePlanKeyCommand = jest
+      .fn()
+      .mockImplementation((commandParams) => {
+        if (commandParams.usagePlanId === oldUsagePlanId) {
+          return true;
+        }
+
+        throw new NotFoundException({
+          message: "Not attached to new plan",
+          $metadata: {},
+        });
+      });
+    const mockDeleteUsagePlanKeyCommand = jest.fn();
+    const mockCreateUsagePlanKeyCommand = jest.fn();
+    jest.mock("@aws-sdk/client-api-gateway", () => {
+      return {
+        APIGatewayClient: jest.fn().mockImplementation(() => ({
+          send: jest.fn().mockImplementation((command) => {
+            return command;
+          }),
+        })),
+        UpdateApiKeyCommand: mockUpdateApiKeyCommand,
+        GetUsagePlanKeyCommand: mockGetUsagePlanKeyCommand,
+        CreateUsagePlanKeyCommand: mockCreateUsagePlanKeyCommand,
+        DeleteUsagePlanKeyCommand: mockDeleteUsagePlanKeyCommand,
+        NotFoundException: NotFoundException,
+      };
+    });
+
+    const mockedFetch = fetch as jest.MockedFunction<typeof fetch>;
+
+    mockedFetch.mockResolvedValue({
+      json: jest.fn().mockResolvedValueOnce({
+        data: {
+          status: "successful",
+          card: {
+            expiry: fakeCardExpiry,
+            token: fakeCardToken,
+          },
+        },
+      }),
+      ok: true,
+    } as unknown as Response);
+
+    const { handler } = await import("../../resources/webhook-handler");
+
+    const event = fakeEvent;
+
+    const res = await handler(event);
+
+    expect(console.log).toHaveBeenCalledWith(JSON.parse(event.body!));
+
+    expect(console.log).toHaveBeenCalledWith("cold start, so fetching secrets");
+
+    expect(mockGetSecretValueCommand).toHaveBeenCalledTimes(2);
+
+    expect(mockGetSecretValueCommand).toHaveBeenCalledWith({
+      SecretId: process.env.PAYMENT_SECRET_NAME,
+    });
+
+    expect(mockGetSecretValueCommand).toHaveBeenCalledWith({
+      SecretId: process.env.WEBHOOK_SECRET_NAME,
+    });
+
+    expect(console.log).toHaveBeenCalledWith(
+      "verified webhook event data successfully"
+    );
+
+    expect(mockedFetch).toHaveBeenCalledTimes(1);
+    expect(mockedFetch).toHaveBeenCalledWith(
+      `${process.env.PAYMENT_GATEWAY_URL}/transactions/${eventId}/verify`,
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${paymentSecret}`,
+        },
+      }
+    );
+
+    expect(mockGetCommand).toHaveBeenCalledTimes(1);
+    expect(mockGetCommand).toHaveBeenCalledWith({
+      TableName: process.env.TABLE_NAME!,
+      Key: {
+        projectId: fakeProjectId,
+        userId: fakeUserId,
+      },
+      ProjectionExpression: "apiKeyInfo, sub_status",
+    });
+
+    expect(mockGetUsagePlanKeyCommand).toHaveBeenCalledTimes(2);
+
+    expect(mockGetUsagePlanKeyCommand).toHaveBeenCalledWith({
+      keyId: fakeApiKeyInfo.id,
+      usagePlanId: oldUsagePlanId,
+    });
+
+    expect(mockDeleteUsagePlanKeyCommand).toHaveBeenCalledTimes(1);
+    expect(mockDeleteUsagePlanKeyCommand).toHaveBeenCalledWith({
+      keyId: fakeApiKeyInfo.id,
+      usagePlanId: oldUsagePlanId,
+    });
+
+    expect(mockGetUsagePlanKeyCommand).toHaveBeenLastCalledWith({
+      keyId: fakeApiKeyInfo.id,
+      usagePlanId: fakeUsagePlanId,
+    });
+
+    expect(mockCreateUsagePlanKeyCommand).toHaveBeenCalledTimes(1);
+    expect(mockCreateUsagePlanKeyCommand).toHaveBeenCalledWith({
+      keyType: "API_KEY",
+      usagePlanId: fakeUsagePlanId,
+      keyId: fakeApiKeyInfo.id,
     });
 
     expect(mockUpdateCommand).toHaveBeenCalledTimes(1);
@@ -682,7 +888,7 @@ describe("webhook handler", () => {
 
     const { handler } = await import("../../resources/webhook-handler");
 
-    const event = realEvent;
+    const event = fakeEvent;
 
     const mockedFetch = fetch as jest.MockedFunction<typeof fetch>;
 
@@ -757,7 +963,7 @@ describe("webhook handler", () => {
 
     const { handler } = await import("../../resources/webhook-handler");
 
-    const event = realEvent;
+    const event = fakeEvent;
 
     const mockedFetch = fetch as jest.MockedFunction<typeof fetch>;
 
