@@ -132,7 +132,7 @@ describe("downgrade subscription handler", () => {
     });
 
     const { handler } = await import(
-      "../../resources/downgrade-subscription-handler"
+      "../../lambda-handlers/downgrade-subscription-handler"
     );
 
     const event = {
@@ -315,7 +315,7 @@ describe("downgrade subscription handler", () => {
     });
 
     const { handler } = await import(
-      "../../resources/downgrade-subscription-handler"
+      "../../lambda-handlers/downgrade-subscription-handler"
     );
 
     const event = {
@@ -461,7 +461,7 @@ describe("downgrade subscription handler", () => {
     });
 
     const { handler } = await import(
-      "../../resources/downgrade-subscription-handler"
+      "../../lambda-handlers/downgrade-subscription-handler"
     );
 
     const event = {
@@ -584,7 +584,7 @@ describe("downgrade subscription handler", () => {
     });
 
     const { handler } = await import(
-      "../../resources/downgrade-subscription-handler"
+      "../../lambda-handlers/downgrade-subscription-handler"
     );
 
     const event = {
@@ -699,7 +699,7 @@ describe("downgrade subscription handler", () => {
     });
 
     const { handler } = await import(
-      "../../resources/downgrade-subscription-handler"
+      "../../lambda-handlers/downgrade-subscription-handler"
     );
 
     const event = {
@@ -789,7 +789,7 @@ describe("downgrade subscription handler", () => {
     });
 
     const { handler } = await import(
-      "../../resources/downgrade-subscription-handler"
+      "../../lambda-handlers/downgrade-subscription-handler"
     );
 
     const event = {
@@ -867,7 +867,7 @@ describe("downgrade subscription handler", () => {
     });
 
     const { handler } = await import(
-      "../../resources/downgrade-subscription-handler"
+      "../../lambda-handlers/downgrade-subscription-handler"
     );
 
     const event = {
@@ -942,7 +942,7 @@ describe("downgrade subscription handler", () => {
     });
 
     const { handler } = await import(
-      "../../resources/downgrade-subscription-handler"
+      "../../lambda-handlers/downgrade-subscription-handler"
     );
 
     const event = {

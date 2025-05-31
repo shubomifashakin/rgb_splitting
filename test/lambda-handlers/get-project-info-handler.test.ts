@@ -55,7 +55,7 @@ describe("get project info handler", () => {
     } as unknown as AuthorizedApiGatewayEvent;
 
     const { handler } = await import(
-      "../../resources/get-project-info-handler"
+      "../../lambda-handlers/get-project-info-handler"
     );
 
     const res = await handler(event);
@@ -127,7 +127,7 @@ describe("get project info handler", () => {
     } as unknown as AuthorizedApiGatewayEvent;
 
     const { handler } = await import(
-      "../../resources/get-project-info-handler"
+      "../../lambda-handlers/get-project-info-handler"
     );
 
     const res = await handler(event);
@@ -205,7 +205,7 @@ describe("get project info handler", () => {
     } as unknown as AuthorizedApiGatewayEvent;
 
     const { handler } = await import(
-      "../../resources/get-project-info-handler"
+      "../../lambda-handlers/get-project-info-handler"
     );
 
     const res = await handler(event);
@@ -284,7 +284,7 @@ describe("get project info handler", () => {
     } as unknown as AuthorizedApiGatewayEvent;
 
     const { handler } = await import(
-      "../../resources/get-project-info-handler"
+      "../../lambda-handlers/get-project-info-handler"
     );
 
     const res = await handler(event);
@@ -376,7 +376,7 @@ describe("get project info handler", () => {
     } as unknown as AuthorizedApiGatewayEvent;
 
     const { handler } = await import(
-      "../../resources/get-project-info-handler"
+      "../../lambda-handlers/get-project-info-handler"
     );
 
     const res = await handler(event);
@@ -429,7 +429,7 @@ describe("get project info handler", () => {
     } as unknown as AuthorizedApiGatewayEvent;
 
     const { handler } = await import(
-      "../../resources/get-project-info-handler"
+      "../../lambda-handlers/get-project-info-handler"
     );
 
     const res = await handler(event);
@@ -466,7 +466,7 @@ describe("get project info handler", () => {
     } as unknown as AuthorizedApiGatewayEvent;
 
     const { handler } = await import(
-      "../../resources/get-project-info-handler"
+      "../../lambda-handlers/get-project-info-handler"
     );
 
     const res = await handler(event);
@@ -506,7 +506,7 @@ describe("get project info handler", () => {
     } as unknown as AuthorizedApiGatewayEvent;
 
     const { handler } = await import(
-      "../../resources/get-project-info-handler"
+      "../../lambda-handlers/get-project-info-handler"
     );
 
     const res = await handler(event);
@@ -573,7 +573,7 @@ describe("get project info handler", () => {
     } as unknown as AuthorizedApiGatewayEvent;
 
     const { handler } = await import(
-      "../../resources/get-project-info-handler"
+      "../../lambda-handlers/get-project-info-handler"
     );
 
     const res = await handler(event);
@@ -642,7 +642,7 @@ describe("get project info handler", () => {
     } as unknown as AuthorizedApiGatewayEvent;
 
     const { handler } = await import(
-      "../../resources/get-project-info-handler"
+      "../../lambda-handlers/get-project-info-handler"
     );
 
     await expect(handler(event)).rejects.toThrow(Error);

@@ -46,7 +46,7 @@ describe("get processed images handler", () => {
     } as unknown as APIGatewayProxyEventV2;
 
     const { handler } = await import(
-      "../../resources/get-processed-images-handler"
+      "../../lambda-handlers/get-processed-images-handler"
     );
     const result = await handler(
       event,
@@ -85,7 +85,7 @@ describe("get processed images handler", () => {
     } as unknown as APIGatewayProxyEventV2;
 
     const { handler } = await import(
-      "../../resources/get-processed-images-handler"
+      "../../lambda-handlers/get-processed-images-handler"
     );
     const result = await handler(
       event,
@@ -108,7 +108,7 @@ describe("get processed images handler", () => {
     } as unknown as APIGatewayProxyEventV2;
 
     const { handler } = await import(
-      "../../resources/get-processed-images-handler"
+      "../../lambda-handlers/get-processed-images-handler"
     );
     const result = await handler(
       event,
@@ -153,7 +153,7 @@ describe("get processed images handler", () => {
     });
 
     const { handler } = await import(
-      "../../resources/get-processed-images-handler"
+      "../../lambda-handlers/get-processed-images-handler"
     );
 
     const result = await handler(
@@ -194,7 +194,7 @@ describe("get processed images handler", () => {
     });
 
     const { handler } = await import(
-      "../../resources/get-processed-images-handler"
+      "../../lambda-handlers/get-processed-images-handler"
     );
 
     await expect(

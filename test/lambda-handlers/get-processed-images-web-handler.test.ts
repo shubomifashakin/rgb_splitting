@@ -53,7 +53,7 @@ describe("get processed images web handler", () => {
     });
 
     const { handler } = await import(
-      "../../resources/get-processed-images-web-handler"
+      "../../lambda-handlers/get-processed-images-web-handler"
     );
 
     const result = await handler(event);
@@ -107,7 +107,7 @@ describe("get processed images web handler", () => {
     } as unknown as AuthorizedApiGatewayEvent;
 
     const { handler } = await import(
-      "../../resources/get-processed-images-web-handler"
+      "../../lambda-handlers/get-processed-images-web-handler"
     );
 
     const result = await handler(event);
@@ -139,7 +139,7 @@ describe("get processed images web handler", () => {
     } as unknown as AuthorizedApiGatewayEvent;
 
     const { handler } = await import(
-      "../../resources/get-processed-images-web-handler"
+      "../../lambda-handlers/get-processed-images-web-handler"
     );
 
     const result = await handler(event);
@@ -174,7 +174,7 @@ describe("get processed images web handler", () => {
     } as unknown as AuthorizedApiGatewayEvent;
 
     const { handler } = await import(
-      "../../resources/get-processed-images-web-handler"
+      "../../lambda-handlers/get-processed-images-web-handler"
     );
 
     const result = await handler(event);
@@ -228,7 +228,7 @@ describe("get processed images web handler", () => {
     });
 
     const { handler } = await import(
-      "../../resources/get-processed-images-web-handler"
+      "../../lambda-handlers/get-processed-images-web-handler"
     );
 
     const result = await handler(event);
@@ -278,7 +278,7 @@ describe("get processed images web handler", () => {
     });
 
     const { handler } = await import(
-      "../../resources/get-processed-images-web-handler"
+      "../../lambda-handlers/get-processed-images-web-handler"
     );
 
     await expect(handler(event)).rejects.toThrow(expect.any(Error));

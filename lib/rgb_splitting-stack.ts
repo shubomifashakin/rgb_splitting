@@ -243,7 +243,7 @@ export class RgbSplittingStack extends cdk.Stack {
           BUCKET_NAME: s3Bucket.bucketName,
           RESULTS_TABLE_NAME: processedImagesTable.tableName,
         },
-        entry: "./resources/splitting-handler.ts",
+        entry: "./lambda-handlers/splitting-handler.ts",
         handler: "handler",
         memorySize: 1536,
         layers: [canvasLayer],
@@ -273,7 +273,7 @@ export class RgbSplittingStack extends cdk.Stack {
           BUCKET_NAME: s3Bucket.bucketName,
           TABLE_NAME: projectsTable.tableName,
         },
-        entry: "./resources/generate-presigned-url.ts",
+        entry: "./lambda-handlers/generate-presigned-url.ts",
         handler: "handler",
       }
     );
@@ -287,7 +287,7 @@ export class RgbSplittingStack extends cdk.Stack {
         description:
           "This lambda receives webhook events from our payment gateway",
         runtime: Runtime.NODEJS_22_X,
-        entry: "./resources/webhook-handler.ts",
+        entry: "./lambda-handlers/webhook-handler.ts",
         handler: "handler",
         environment: {
           REGION: this.region,
@@ -309,7 +309,7 @@ export class RgbSplittingStack extends cdk.Stack {
         description:
           "This lambda is used for getting all the projects for a user",
         runtime: Runtime.NODEJS_22_X,
-        entry: "./resources/get-users-projects-handler.ts",
+        entry: "./lambda-handlers/get-users-projects-handler.ts",
         handler: "handler",
         environment: {
           REGION: this.region,
@@ -326,7 +326,7 @@ export class RgbSplittingStack extends cdk.Stack {
         functionName: `${props.variables.projectPrefix}-payments-lambda`,
         description: "This lambda is used to handle subcription payments.",
         runtime: Runtime.NODEJS_22_X,
-        entry: "./resources/payments-handler.ts",
+        entry: "./lambda-handlers/payments-handler.ts",
         handler: "handler",
         environment: {
           REGION: this.region,
@@ -346,7 +346,7 @@ export class RgbSplittingStack extends cdk.Stack {
         functionName: `${props.variables.projectPrefix}-user-authorizer-lambda`,
         description: "This lambda validates the user",
         runtime: Runtime.NODEJS_22_X,
-        entry: "./resources/authorizer-lambda-handler.ts",
+        entry: "./lambda-handlers/authorizer-lambda-handler.ts",
         handler: "handler",
         timeout: cdk.Duration.seconds(10),
         environment: {
@@ -363,7 +363,7 @@ export class RgbSplittingStack extends cdk.Stack {
         description:
           "This lambda is used for resubscribing all users with expired subscriptions to their plan. It runs every week, triggered by the event bridge rule",
         runtime: Runtime.NODEJS_22_X,
-        entry: "./resources/resubscribe.ts",
+        entry: "./lambda-handlers/resubscribe.ts",
         handler: "handler",
         environment: {
           REGION: this.region,
@@ -388,7 +388,7 @@ export class RgbSplittingStack extends cdk.Stack {
         description:
           "This lambda is used to downgrade subscriptions that have failed to resubscribe. It receives messages from the sqs queue",
         runtime: Runtime.NODEJS_22_X,
-        entry: "./resources/downgrade-subscription-handler.ts",
+        entry: "./lambda-handlers/downgrade-subscription-handler.ts",
         handler: "handler",
         environment: {
           REGION: this.region,
@@ -407,7 +407,7 @@ export class RgbSplittingStack extends cdk.Stack {
         description:
           "This lambda is used to get the processed images for an image on the users application",
         runtime: Runtime.NODEJS_22_X,
-        entry: "./resources/get-processed-images-handler.ts",
+        entry: "./lambda-handlers/get-processed-images-handler.ts",
         handler: "handler",
         environment: {
           REGION: this.region,
@@ -425,7 +425,7 @@ export class RgbSplittingStack extends cdk.Stack {
         description:
           "This lambda is used to get the processed images for an image on the web portal.",
         runtime: Runtime.NODEJS_22_X,
-        entry: "./resources/get-processed-images-web-handler.ts",
+        entry: "./lambda-handlers/get-processed-images-web-handler.ts",
         handler: "handler",
         environment: {
           REGION: this.region,
@@ -443,7 +443,7 @@ export class RgbSplittingStack extends cdk.Stack {
         description:
           "This lambda is used to enable users cancel their subscription for a particular project",
         runtime: Runtime.NODEJS_22_X,
-        entry: "./resources/cancel-subscription-handler.ts",
+        entry: "./lambda-handlers/cancel-subscription-handler.ts",
         handler: "handler",
         environment: {
           REGION: this.region,
@@ -462,7 +462,7 @@ export class RgbSplittingStack extends cdk.Stack {
         description:
           "This lambda is used to get the info for a particular project",
         runtime: Runtime.NODEJS_22_X,
-        entry: "./resources/get-project-info-handler.ts",
+        entry: "./lambda-handlers/get-project-info-handler.ts",
         handler: "handler",
         environment: {
           REGION: this.region,
@@ -481,7 +481,7 @@ export class RgbSplittingStack extends cdk.Stack {
         description:
           "This lambda is used to update the name of a particular project",
         runtime: Runtime.NODEJS_22_X,
-        entry: "./resources/update_project_name_handler.ts",
+        entry: "./lambda-handlers/update_project_name_handler.ts",
         handler: "handler",
         environment: {
           REGION: this.region,
@@ -498,7 +498,7 @@ export class RgbSplittingStack extends cdk.Stack {
         functionName: `${props.variables.projectPrefix}-delete-project-lambda`,
         description: "This lambda is used to delete a particular project",
         runtime: Runtime.NODEJS_22_X,
-        entry: "./resources/delete_project_handler.ts",
+        entry: "./lambda-handlers/delete_project_handler.ts",
         handler: "handler",
         environment: {
           REGION: this.region,

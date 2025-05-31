@@ -71,7 +71,9 @@ describe("generate presigned url", () => {
       };
     });
 
-    const { handler } = await import("../../resources/generate-presigned-url");
+    const { handler } = await import(
+      "../../lambda-handlers/generate-presigned-url"
+    );
 
     const fakeEvent = {
       body: JSON.stringify({
@@ -148,7 +150,9 @@ describe("generate presigned url", () => {
       },
     } as unknown as APIGatewayProxyEventV2;
 
-    const { handler } = await import("../../resources/generate-presigned-url");
+    const { handler } = await import(
+      "../../lambda-handlers/generate-presigned-url"
+    );
 
     const res = await handler(fakeEvent);
 
@@ -179,7 +183,9 @@ describe("generate presigned url", () => {
       },
     } as unknown as APIGatewayProxyEventV2;
 
-    const { handler } = await import("../../resources/generate-presigned-url");
+    const { handler } = await import(
+      "../../lambda-handlers/generate-presigned-url"
+    );
 
     const res = await handler(fakeEvent);
 
@@ -210,7 +216,9 @@ describe("generate presigned url", () => {
       },
     } as unknown as APIGatewayProxyEventV2;
 
-    const { handler } = await import("../../resources/generate-presigned-url");
+    const { handler } = await import(
+      "../../lambda-handlers/generate-presigned-url"
+    );
 
     const res = await handler(fakeEvent);
 
@@ -242,7 +250,9 @@ describe("generate presigned url", () => {
       },
     } as unknown as APIGatewayProxyEventV2;
 
-    const { handler } = await import("../../resources/generate-presigned-url");
+    const { handler } = await import(
+      "../../lambda-handlers/generate-presigned-url"
+    );
 
     const res = await handler(fakeEvent);
 
@@ -290,7 +300,9 @@ describe("generate presigned url", () => {
       };
     });
 
-    const { handler } = await import("../../resources/generate-presigned-url");
+    const { handler } = await import(
+      "../../lambda-handlers/generate-presigned-url"
+    );
 
     const res = await handler(fakeEvent);
 
@@ -356,7 +368,9 @@ describe("generate presigned url", () => {
       };
     });
 
-    const { handler } = await import("../../resources/generate-presigned-url");
+    const { handler } = await import(
+      "../../lambda-handlers/generate-presigned-url"
+    );
 
     const res = await handler(fakeEvent);
 
@@ -422,7 +436,9 @@ describe("generate presigned url", () => {
       };
     });
 
-    const { handler } = await import("../../resources/generate-presigned-url");
+    const { handler } = await import(
+      "../../lambda-handlers/generate-presigned-url"
+    );
 
     const res = await handler(fakeEvent);
 
@@ -482,7 +498,9 @@ describe("generate presigned url", () => {
       };
     });
 
-    const { handler } = await import("../../resources/generate-presigned-url");
+    const { handler } = await import(
+      "../../lambda-handlers/generate-presigned-url"
+    );
 
     await expect(handler(fakeEvent)).rejects.toThrow(Error);
 

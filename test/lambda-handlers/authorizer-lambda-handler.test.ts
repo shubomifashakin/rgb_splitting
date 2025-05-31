@@ -40,7 +40,7 @@ describe("authorizer lambda handler", () => {
     const callback = jest.fn();
 
     const { handler } = await import(
-      "../../resources/authorizer-lambda-handler"
+      "../../lambda-handlers/authorizer-lambda-handler"
     );
 
     await handler(event, context as Context, callback);
@@ -89,7 +89,7 @@ describe("authorizer lambda handler", () => {
     const callback = jest.fn();
 
     const { handler } = await import(
-      "../../resources/authorizer-lambda-handler"
+      "../../lambda-handlers/authorizer-lambda-handler"
     );
 
     await handler(event, context as Context, callback);
@@ -142,7 +142,7 @@ describe("authorizer lambda handler", () => {
     const callback = jest.fn();
 
     const { handler } = await import(
-      "../../resources/authorizer-lambda-handler"
+      "../../lambda-handlers/authorizer-lambda-handler"
     );
 
     const res = await handler(event, context as Context, callback);
@@ -167,7 +167,7 @@ describe("authorizer lambda handler", () => {
     const callback = jest.fn();
 
     const { handler } = await import(
-      "../../resources/authorizer-lambda-handler"
+      "../../lambda-handlers/authorizer-lambda-handler"
     );
 
     const res = await handler(event, context as Context, callback);
@@ -218,7 +218,7 @@ describe("authorizer lambda handler", () => {
     const callback = jest.fn();
 
     const { handler } = await import(
-      "../../resources/authorizer-lambda-handler"
+      "../../lambda-handlers/authorizer-lambda-handler"
     );
 
     const res = await handler(event, context as Context, callback);

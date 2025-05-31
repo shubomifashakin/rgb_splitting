@@ -298,7 +298,7 @@ describe("splitting handler", () => {
   test("it should split the image -- channels and grains are equal", async () => {
     executeMocks();
 
-    const { handler } = await import("../../resources/splitting-handler");
+    const { handler } = await import("../../lambda-handlers/splitting-handler");
 
     const mockImageKey = "mock-key";
     const mockBucketName = equalValuesBucketName;
@@ -362,7 +362,7 @@ describe("splitting handler", () => {
   test("it should split the image -- channels and grains are equal -- same image present", async () => {
     executeMocks();
 
-    const { handler } = await import("../../resources/splitting-handler");
+    const { handler } = await import("../../lambda-handlers/splitting-handler");
 
     const mockImageKey = "mock-key";
     const mockBucketName = equalValuesButSameImagePresent;
@@ -426,7 +426,7 @@ describe("splitting handler", () => {
   test("it should split the image -- more channels than grains", async () => {
     executeMocks();
 
-    const { handler } = await import("../../resources/splitting-handler");
+    const { handler } = await import("../../lambda-handlers/splitting-handler");
 
     const mockImageKey = "mock-key";
     const mockBucketName = moreChannelsBucketName;
@@ -522,7 +522,7 @@ describe("splitting handler", () => {
   test("it should split the image -- more channels than grains -- same image present", async () => {
     executeMocks();
 
-    const { handler } = await import("../../resources/splitting-handler");
+    const { handler } = await import("../../lambda-handlers/splitting-handler");
 
     const mockImageKey = "mock-key";
     const mockBucketName = moreChannelsButSameImagePresent;
@@ -602,7 +602,7 @@ describe("splitting handler", () => {
   test("it should split the image -- more grains than channels", async () => {
     executeMocks();
 
-    const { handler } = await import("../../resources/splitting-handler");
+    const { handler } = await import("../../lambda-handlers/splitting-handler");
 
     const mockImageKey = "mock-key";
     const mockBucketName = moreGrainsBucketName;
@@ -682,7 +682,7 @@ describe("splitting handler", () => {
   test("it should split the image -- more grains than channels -- same image present", async () => {
     executeMocks();
 
-    const { handler } = await import("../../resources/splitting-handler");
+    const { handler } = await import("../../lambda-handlers/splitting-handler");
 
     const mockImageKey = "mock-key";
     const mockBucketName = moreGrainsButSameImagePresent;
@@ -746,7 +746,7 @@ describe("splitting handler", () => {
   test("it should split the image -- one channel more grains", async () => {
     executeMocks();
 
-    const { handler } = await import("../../resources/splitting-handler");
+    const { handler } = await import("../../lambda-handlers/splitting-handler");
 
     const mockImageKey = "mock-key";
     const mockBucketName = oneChannelMoreGrainsBucketName;
@@ -826,7 +826,7 @@ describe("splitting handler", () => {
   test("it should split the image -- one channel more grains -- same image present", async () => {
     executeMocks();
 
-    const { handler } = await import("../../resources/splitting-handler");
+    const { handler } = await import("../../lambda-handlers/splitting-handler");
 
     const mockImageKey = "mock-key";
     const mockBucketName = oneChannelMoreGrainsButSameImagePresent;
@@ -891,7 +891,7 @@ describe("splitting handler", () => {
   test("it should split the image -- one grain more channels", async () => {
     executeMocks();
 
-    const { handler } = await import("../../resources/splitting-handler");
+    const { handler } = await import("../../lambda-handlers/splitting-handler");
 
     const mockImageKey = "mock-key";
     const mockBucketName = oneGrainMoreChannelsBucketName;
@@ -971,7 +971,7 @@ describe("splitting handler", () => {
   test("it should split the image -- one grain more channels -- but same image present", async () => {
     executeMocks();
 
-    const { handler } = await import("../../resources/splitting-handler");
+    const { handler } = await import("../../lambda-handlers/splitting-handler");
 
     const mockImageKey = "mock-key";
     const mockBucketName = oneGrainMoreChannelsButSameImagePresent;
@@ -1033,7 +1033,7 @@ describe("splitting handler", () => {
   });
 
   test("it should throw an error because no records were found", async () => {
-    const { handler } = await import("../../resources/splitting-handler");
+    const { handler } = await import("../../lambda-handlers/splitting-handler");
 
     const mockEvent = {
       Records: [],
@@ -1077,7 +1077,7 @@ describe("splitting handler", () => {
       };
     });
 
-    const { handler } = await import("../../resources/splitting-handler");
+    const { handler } = await import("../../lambda-handlers/splitting-handler");
 
     await expect(handler(mockEvent as unknown as S3Event)).rejects.toThrow(
       Error
@@ -1125,7 +1125,7 @@ describe("splitting handler", () => {
       };
     });
 
-    const { handler } = await import("../../resources/splitting-handler");
+    const { handler } = await import("../../lambda-handlers/splitting-handler");
 
     await expect(handler(mockEvent as unknown as S3Event)).rejects.toThrow(
       Error

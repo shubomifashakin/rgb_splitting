@@ -41,7 +41,7 @@ describe("get users projects handler", () => {
     });
 
     const { handler } = await import(
-      "../../resources/get-users-projects-handler"
+      "../../lambda-handlers/get-users-projects-handler"
     );
 
     const res = await handler(event);
@@ -117,7 +117,7 @@ describe("get users projects handler", () => {
     });
 
     const { handler } = await import(
-      "../../resources/get-users-projects-handler"
+      "../../lambda-handlers/get-users-projects-handler"
     );
 
     const res = await handler(event);
@@ -168,7 +168,7 @@ describe("get users projects handler", () => {
     } as unknown as AuthorizedApiGatewayEvent;
 
     const { handler } = await import(
-      "../../resources/get-users-projects-handler"
+      "../../lambda-handlers/get-users-projects-handler"
     );
 
     const res = await handler(event);
@@ -218,7 +218,7 @@ describe("get users projects handler", () => {
     });
 
     const { handler } = await import(
-      "../../resources/get-users-projects-handler"
+      "../../lambda-handlers/get-users-projects-handler"
     );
 
     await expect(handler(event)).rejects.toThrow(Error);

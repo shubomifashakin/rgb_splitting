@@ -34,7 +34,7 @@ describe("update project name handler", () => {
     });
 
     const { handler } = await import(
-      "../../resources/update_project_name_handler"
+      "../../lambda-handlers/update_project_name_handler"
     );
 
     const event = {
@@ -83,7 +83,7 @@ describe("update project name handler", () => {
 
   test("it should return a 401 error due to missing userId", async () => {
     const { handler } = await import(
-      "../../resources/update_project_name_handler"
+      "../../lambda-handlers/update_project_name_handler"
     );
 
     const event = {
@@ -121,7 +121,7 @@ describe("update project name handler", () => {
 
   test("it should return a 400 error due to missing body", async () => {
     const { handler } = await import(
-      "../../resources/update_project_name_handler"
+      "../../lambda-handlers/update_project_name_handler"
     );
 
     const event = {
@@ -157,7 +157,7 @@ describe("update project name handler", () => {
 
   test("it should return a 400 error due to invalid projectId", async () => {
     const { handler } = await import(
-      "../../resources/update_project_name_handler"
+      "../../lambda-handlers/update_project_name_handler"
     );
 
     const event = {
@@ -196,7 +196,7 @@ describe("update project name handler", () => {
 
   test("it should throw a 400 due to invalid project name", async () => {
     const { handler } = await import(
-      "../../resources/update_project_name_handler"
+      "../../lambda-handlers/update_project_name_handler"
     );
 
     const event = {
@@ -252,7 +252,7 @@ describe("update project name handler", () => {
     });
 
     const { handler } = await import(
-      "../../resources/update_project_name_handler"
+      "../../lambda-handlers/update_project_name_handler"
     );
 
     const event = {

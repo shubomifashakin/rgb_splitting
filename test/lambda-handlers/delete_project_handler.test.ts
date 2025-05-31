@@ -63,7 +63,9 @@ describe("delete-project_handler", () => {
       },
     } as unknown as AuthorizedApiGatewayEvent;
 
-    const { handler } = await import("../../resources/delete_project_handler");
+    const { handler } = await import(
+      "../../lambda-handlers/delete_project_handler"
+    );
 
     const res = await handler(event);
 
@@ -118,7 +120,9 @@ describe("delete-project_handler", () => {
       },
     } as unknown as AuthorizedApiGatewayEvent;
 
-    const { handler } = await import("../../resources/delete_project_handler");
+    const { handler } = await import(
+      "../../lambda-handlers/delete_project_handler"
+    );
 
     const res = await handler(event);
 
@@ -148,7 +152,9 @@ describe("delete-project_handler", () => {
       },
     } as unknown as AuthorizedApiGatewayEvent;
 
-    const { handler } = await import("../../resources/delete_project_handler");
+    const { handler } = await import(
+      "../../lambda-handlers/delete_project_handler"
+    );
 
     const res = await handler(event);
 
@@ -190,7 +196,9 @@ describe("delete-project_handler", () => {
       },
     } as unknown as AuthorizedApiGatewayEvent;
 
-    const { handler } = await import("../../resources/delete_project_handler");
+    const { handler } = await import(
+      "../../lambda-handlers/delete_project_handler"
+    );
 
     const res = await handler(event);
 
@@ -230,7 +238,9 @@ describe("delete-project_handler", () => {
       },
     } as unknown as AuthorizedApiGatewayEvent;
 
-    const { handler } = await import("../../resources/delete_project_handler");
+    const { handler } = await import(
+      "../../lambda-handlers/delete_project_handler"
+    );
 
     await expect(handler(event)).rejects.toThrow("fake error");
 

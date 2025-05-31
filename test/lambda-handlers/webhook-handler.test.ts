@@ -147,7 +147,7 @@ describe("webhook handler", () => {
       ok: true,
     } as unknown as Response);
 
-    const { handler } = await import("../../resources/webhook-handler");
+    const { handler } = await import("../../lambda-handlers/webhook-handler");
 
     const event = fakeEvent;
 
@@ -320,7 +320,7 @@ describe("webhook handler", () => {
       ok: true,
     } as unknown as Response);
 
-    const { handler } = await import("../../resources/webhook-handler");
+    const { handler } = await import("../../lambda-handlers/webhook-handler");
 
     const event = fakeEvent;
 
@@ -499,7 +499,7 @@ describe("webhook handler", () => {
       ok: true,
     } as unknown as Response);
 
-    const { handler } = await import("../../resources/webhook-handler");
+    const { handler } = await import("../../lambda-handlers/webhook-handler");
 
     const event = fakeEvent;
 
@@ -600,7 +600,7 @@ describe("webhook handler", () => {
   test("it should return a 400 error due to an empty body", async () => {
     const event = { body: null } as unknown as APIGatewayProxyEventV2;
 
-    const { handler } = await import("../../resources/webhook-handler");
+    const { handler } = await import("../../lambda-handlers/webhook-handler");
 
     const res = await handler(event);
 
@@ -642,7 +642,7 @@ describe("webhook handler", () => {
       };
     });
 
-    const { handler } = await import("../../resources/webhook-handler");
+    const { handler } = await import("../../lambda-handlers/webhook-handler");
 
     const fakeProjectName = "test project";
 
@@ -726,7 +726,7 @@ describe("webhook handler", () => {
       };
     });
 
-    const { handler } = await import("../../resources/webhook-handler");
+    const { handler } = await import("../../lambda-handlers/webhook-handler");
 
     const fakeProjectName = "test project";
 
@@ -809,7 +809,7 @@ describe("webhook handler", () => {
       };
     });
 
-    const { handler } = await import("../../resources/webhook-handler");
+    const { handler } = await import("../../lambda-handlers/webhook-handler");
 
     const usersEmail = "test@example.com";
 
@@ -886,7 +886,7 @@ describe("webhook handler", () => {
       };
     });
 
-    const { handler } = await import("../../resources/webhook-handler");
+    const { handler } = await import("../../lambda-handlers/webhook-handler");
 
     const event = fakeEvent;
 
@@ -961,7 +961,7 @@ describe("webhook handler", () => {
       };
     });
 
-    const { handler } = await import("../../resources/webhook-handler");
+    const { handler } = await import("../../lambda-handlers/webhook-handler");
 
     const event = fakeEvent;
 

@@ -54,7 +54,7 @@ describe("cancel-subscription-handler", () => {
     });
 
     const { handler } = await import(
-      "../../resources/cancel-subscription-handler"
+      "../../lambda-handlers/cancel-subscription-handler"
     );
 
     const event = {
@@ -122,7 +122,7 @@ describe("cancel-subscription-handler", () => {
 
   test("it should return a 400 error (invalid projectId)", async () => {
     const { handler } = await import(
-      "../../resources/cancel-subscription-handler"
+      "../../lambda-handlers/cancel-subscription-handler"
     );
 
     const event = {
@@ -170,7 +170,7 @@ describe("cancel-subscription-handler", () => {
     });
 
     const { handler } = await import(
-      "../../resources/cancel-subscription-handler"
+      "../../lambda-handlers/cancel-subscription-handler"
     );
 
     const event = {
@@ -225,7 +225,7 @@ describe("cancel-subscription-handler", () => {
     });
 
     const { handler } = await import(
-      "../../resources/cancel-subscription-handler"
+      "../../lambda-handlers/cancel-subscription-handler"
     );
 
     const event = {
@@ -251,7 +251,7 @@ describe("cancel-subscription-handler", () => {
 
   test("it should return a 400 error (no userId)", async () => {
     const { handler } = await import(
-      "../../resources/cancel-subscription-handler"
+      "../../lambda-handlers/cancel-subscription-handler"
     );
 
     const event = {
