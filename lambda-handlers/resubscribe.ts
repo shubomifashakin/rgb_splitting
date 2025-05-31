@@ -44,7 +44,7 @@ let paymentGatewaySecret: string | undefined;
 //if there is a last evaluated key, we send it to the queue and the process will continue
 
 //this is a recursive process, because the queue continues to trigger the lambda until there are no batches left
-export const handler: Handler = async (event: SQSEvent | null) => {
+export const handler = async (event?: SQSEvent) => {
   console.log("event", event);
 
   //this is the last evaluated key from the previous batch if this was a queue triggered invocation
@@ -100,7 +100,6 @@ export const handler: Handler = async (event: SQSEvent | null) => {
       ]
     );
 
-    //if there are no expired projects at all, exit
     if (
       proExpiringProjectsReq.Items &&
       !proExpiringProjectsReq.Items.length &&
@@ -118,11 +117,9 @@ export const handler: Handler = async (event: SQSEvent | null) => {
 
     console.log("EXPIRED PROJECTS", projects);
 
-    //if the payment gateway secret or usage plans secret do not exist yet, fetch them
     if (!paymentGatewaySecret || !usagePlans) {
       console.log("fetching secrets");
 
-      //fetch the payment gateway secret and the available usage plans secret
       const [paymentGatewaySecretReq, availableUsagePlans] = await Promise.all([
         secretClient.send(
           new GetSecretValueCommand({
@@ -156,7 +153,6 @@ export const handler: Handler = async (event: SQSEvent | null) => {
         throw new Error(error.message);
       }
 
-      //store the secrets so they can be reused
       usagePlans = allUsagePlans;
       paymentGatewaySecret = paymentGatewaySecretReq.SecretString;
     }
@@ -212,7 +208,9 @@ export const handler: Handler = async (event: SQSEvent | null) => {
               throw new Error(errorMessage.message);
             }
 
-            console.log("SENDING USER TO DOWNGRADE QUEUE", project);
+            console.log(
+              `SENDING PROJECT WITH ID: ${project.projectId} TO DOWNGRADE QUEUE`
+            );
 
             await sqsQueue
               .send(
@@ -223,17 +221,17 @@ export const handler: Handler = async (event: SQSEvent | null) => {
               )
               .catch((error: unknown) => {
                 console.error(
-                  "ERROR: Failed to send project with expired subscription to queue",
-                  error,
-                  project
+                  `ERROR: Failed to send project with ID: ${project.projectId} to downgrade queue`,
+                  error
                 );
               });
 
             break;
           }
 
-          //user was successfully charged
-          console.log("charged user  successfully");
+          console.log(
+            `charged ${project.email} with project ${project.projectId} successfully`
+          );
           break;
         } catch (error: unknown) {
           console.error(`Error charging user: ${project.email}`, error);
@@ -241,7 +239,10 @@ export const handler: Handler = async (event: SQSEvent | null) => {
           attempts++;
 
           if (attempts >= 2) {
-            console.log("SENDING USER TO DOWNGRADE QUEUE", project);
+            console.log(
+              `SENDING PROJECT WITH ID: ${project.projectId} TO DOWNGRADE QUEUE`
+            );
+
             await sqsQueue
               .send(
                 new SendMessageCommand({
@@ -251,9 +252,8 @@ export const handler: Handler = async (event: SQSEvent | null) => {
               )
               .catch((error: unknown) => {
                 console.error(
-                  "ERROR: Failed to send project with expired subscription to queue",
-                  error,
-                  project
+                  `ERROR: Failed to send project with ID: ${project.projectId} to downgrade queue`,
+                  error
                 );
               });
           }
@@ -290,14 +290,6 @@ export const handler: Handler = async (event: SQSEvent | null) => {
     console.log("completed successfully");
     return;
   } catch (error: unknown) {
-    //this would only catch errors caused when the initial fetch for all expired subs fails or when the sqs send fails
-    //throw the error so they can be caught by the alarm
-    if (error instanceof Error) {
-      console.error(error.message);
-
-      throw error;
-    }
-
     console.error("ERROR: FAILED TO HANDLE RESUBSCRIBTION PROCESS", error);
 
     throw error;

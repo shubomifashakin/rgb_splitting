@@ -9,7 +9,7 @@ const config: Config.InitialOptions = {
   },
   collectCoverage: true,
   collectCoverageFrom: [
-    "**/resources/*.ts",
+    "**/lambda-handlers/*.ts",
     "**/helpers/fns/*.ts",
     "**/processImageFns/*.ts",
   ],
