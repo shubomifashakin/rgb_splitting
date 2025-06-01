@@ -1,3 +1,4 @@
+import { SQSEvent } from "aws-lambda";
 import { PlanType, planTypeToStatus } from "../../helpers/constants";
 
 console.log = jest.fn();
@@ -588,7 +589,7 @@ describe("resubscribe handler test", () => {
 
     const { handler } = await import("../../lambda-handlers/resubscribe");
 
-    await handler();
+    await expect(handler()).rejects.toThrow(Error);
 
     expect(console.log).toHaveBeenCalledWith("event", undefined);
 
@@ -635,81 +636,14 @@ describe("resubscribe handler test", () => {
       SecretId: process.env.AVAILABLE_PLANS_SECRET_NAME,
     });
 
-    expect(mockSendMessageCommand).toHaveBeenCalledTimes(3);
+    expect(mockSendMessageCommand).toHaveBeenCalledTimes(0);
 
-    expect(mockSendMessageCommand).toHaveBeenNthCalledWith(1, {
-      QueueUrl: process.env.DOWNGRADE_SUBSCRIPTION_QUEUE_URL,
-      MessageBody: JSON.stringify({
-        projectId: proProjectId,
-        email: projectEmail,
-        userId: "4d5e6f7a-8b9c-0d1e-2f3a-4b5c6d7e8f9a",
-        projectName: "project-name",
-        nextPaymentDate: 1,
-        currentPlan: PlanType.Pro,
-        cardTokenInfo: {
-          cardToken: "card-token",
-          cardTokenExpiryDate: "card-token-expiry-date",
-        },
-      }),
-    });
+    expect(console.error).toHaveBeenCalledTimes(1);
 
-    expect(mockSendMessageCommand).toHaveBeenNthCalledWith(2, {
-      QueueUrl: process.env.DOWNGRADE_SUBSCRIPTION_QUEUE_URL,
-      MessageBody: JSON.stringify({
-        projectId: executiveProjectId,
-        email: projectEmail,
-        userId: "4d5e6f7a-8b9c-0d1e-2f3a-4b5c6d7e8f9a",
-        projectName: "project-name",
-        nextPaymentDate: 1,
-        currentPlan: PlanType.Executive,
-        cardTokenInfo: {
-          cardToken: "card-token",
-          cardTokenExpiryDate: "card-token-expiry-date",
-        },
-      }),
-    });
-
-    expect(console.error).toHaveBeenCalledTimes(4);
-    expect(console.error).toHaveBeenNthCalledWith(
-      1,
-      "Error charging user: test@email.com",
+    expect(console.error).toHaveBeenCalledWith(
+      "ERROR: FAILED TO HANDLE RESUBSCRIBTION PROCESS",
       expect.any(Error)
     );
-    expect(console.error).toHaveBeenNthCalledWith(
-      2,
-      "Error charging user: test@email.com",
-      expect.any(Error)
-    );
-
-    expect(console.log).toHaveBeenCalledWith(
-      `SENDING PROJECT WITH ID: ${proProjectId} TO DOWNGRADE QUEUE`
-    );
-
-    expect(console.log).toHaveBeenCalledWith(
-      `SENDING PROJECT WITH ID: ${executiveProjectId} TO DOWNGRADE QUEUE`
-    );
-
-    expect(console.error).toHaveBeenNthCalledWith(
-      3,
-      "Error charging user: test@email.com",
-      expect.any(Error)
-    );
-
-    expect(console.error).toHaveBeenNthCalledWith(
-      4,
-      "Error charging user: test@email.com",
-      expect.any(Error)
-    );
-
-    expect(mockSendMessageCommand).toHaveBeenNthCalledWith(3, {
-      QueueUrl: process.env.RESUBSCRIBE_QUEUE_URL,
-      MessageBody: JSON.stringify({
-        pro: "fake last evaluated string",
-        exec: "fake last evaluated string",
-      }),
-    });
-
-    expect(console.log).toHaveBeenCalledWith("completed successfully");
   });
 
   test("it should fail to resubscribe all users because it failed to charge users due to network error", async () => {
@@ -1245,7 +1179,7 @@ describe("resubscribe handler test", () => {
     expect(console.log).toHaveBeenCalledWith("completed successfully");
   });
 
-  test("it should fail to resubscribe all users because it failed to charge users due to payment gateway error", async () => {
+  test("it should fail to resubscribe all users because it failed to charge users due to payment charge error", async () => {
     const projectEmail = "test@email.com";
 
     const mockQueryCommand = jest.fn().mockImplementation((params) => {
@@ -1472,7 +1406,7 @@ describe("resubscribe handler test", () => {
     expect(console.log).toHaveBeenCalledWith("completed successfully");
   });
 
-  test("it should fail to resubscribe all users because it failed to charge users due to payment gateway error", async () => {
+  test("it should fail to resubscribe all users due to payment charge error & also fail to send them to dowgrade queue", async () => {
     const projectEmail = "test@email.com";
 
     const mockQueryCommand = jest.fn().mockImplementation((params) => {
@@ -1976,5 +1910,140 @@ describe("resubscribe handler test", () => {
       "ERROR: FAILED TO HANDLE RESUBSCRIBTION PROCESS",
       expect.any(Error)
     );
+  });
+
+  test("it should fetch from dynamo db with exclusiveStartKey", async () => {
+    const projectEmail = "test@email.com";
+
+    const mockQueryCommand = jest.fn().mockImplementation((params) => {
+      if (params.ExclusiveStartKey === "pro-start-key") {
+        return { Items: [], LastEvaluatedKey: undefined };
+      }
+
+      return {
+        Items: [
+          {
+            projectId:
+              params.ExpressionAttributeValues[":status"] ===
+              planTypeToStatus[PlanType.Pro]
+                ? proProjectId
+                : executiveProjectId,
+            email: projectEmail,
+            userId: "4d5e6f7a-8b9c-0d1e-2f3a-4b5c6d7e8f9a",
+            projectName: "project-name",
+            nextPaymentDate: 1,
+            currentPlan:
+              params.ExpressionAttributeValues[":status"] ===
+              planTypeToStatus[PlanType.Pro]
+                ? PlanType.Pro
+                : PlanType.Executive,
+            cardTokenInfo: {
+              cardToken: "card-token",
+              cardTokenExpiryDate: "card-token-expiry-date",
+            },
+          },
+        ],
+        LastEvaluatedKey: "fake last evaluated string",
+      };
+    });
+
+    jest.mock("@aws-sdk/lib-dynamodb", () => {
+      return {
+        DynamoDBDocumentClient: {
+          from: jest.fn().mockImplementation(() => ({
+            send: jest.fn().mockImplementation((command) => {
+              return command;
+            }),
+          })),
+        },
+        QueryCommand: mockQueryCommand,
+      };
+    });
+
+    const mockGetSecretValueCommand = jest.fn().mockImplementation((params) => {
+      if (params.SecretId === process.env.PAYMENT_SECRET_NAME) {
+        return {
+          SecretString: "payment-secret",
+        };
+      }
+
+      if (params.SecretId === process.env.AVAILABLE_PLANS_SECRET_NAME) {
+        return {
+          SecretString: JSON.stringify({
+            pro: "pro",
+            free: "free",
+          }),
+        };
+      }
+
+      throw new Error("Secret not found");
+    });
+
+    jest.mock("@aws-sdk/client-secrets-manager", () => {
+      return {
+        SecretsManagerClient: jest.fn().mockImplementation(() => ({
+          send: jest.fn().mockImplementation((command) => {
+            return command;
+          }),
+        })),
+        GetSecretValueCommand: mockGetSecretValueCommand,
+      };
+    });
+
+    const event = {
+      Records: [
+        {
+          body: JSON.stringify({
+            pro: "pro-start-key",
+            exec: "exec-start-key",
+          }),
+        },
+      ],
+    } as SQSEvent;
+
+    const { handler } = await import("../../lambda-handlers/resubscribe");
+
+    await expect(handler(event)).rejects.toThrow(Error);
+
+    expect(console.log).toHaveBeenCalledWith("event", event);
+
+    expect(console.log).toHaveBeenCalledWith("STARTING CURSORS", {
+      exec: "exec-start-key",
+      pro: "pro-start-key",
+    });
+
+    expect(mockQueryCommand).toHaveBeenCalledTimes(2);
+
+    expect(mockQueryCommand).toHaveBeenCalledWith({
+      IndexName: "expiredSubscriptionIndex",
+      TableName: process.env.TABLE_NAME!,
+      KeyConditionExpression:
+        "sub_status = :status AND nextPaymentDate <= :currentDate",
+      ExpressionAttributeValues: {
+        ":currentDate": expect.any(Number),
+        ":status": planTypeToStatus[PlanType.Pro],
+      },
+      ProjectionExpression:
+        "projectId, email, userId, projectName, nextPaymentDate, currentPlan, cardTokenInfo",
+      Limit: batchLimit,
+      ExclusiveStartKey: "pro-start-key",
+    });
+
+    expect(mockQueryCommand).toHaveBeenCalledWith({
+      IndexName: "expiredSubscriptionIndex",
+      TableName: process.env.TABLE_NAME!,
+      KeyConditionExpression:
+        "sub_status = :status AND nextPaymentDate <= :currentDate",
+      ExpressionAttributeValues: {
+        ":currentDate": expect.any(Number),
+        ":status": planTypeToStatus[PlanType.Executive],
+      },
+      ProjectionExpression:
+        "projectId, email, userId, projectName, nextPaymentDate, currentPlan, cardTokenInfo",
+      Limit: batchLimit,
+      ExclusiveStartKey: "exec-start-key",
+    });
+
+    expect(console.log).toHaveBeenCalledWith("fetching secrets");
   });
 });
