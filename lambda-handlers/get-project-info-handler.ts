@@ -115,6 +115,7 @@ export async function handler(event: AuthorizedApiGatewayEvent) {
     const item = await dynamo.send(
       new QueryCommand({
         TableName: processedImagesTableName,
+        IndexName: "projectIdIndex",
         KeyConditionExpression: "projectId = :projectId",
         ExpressionAttributeValues: {
           ":userId": userId,

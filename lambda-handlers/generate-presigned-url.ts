@@ -181,7 +181,7 @@ export const handler = async (event: APIGatewayProxyEventV2) => {
     console.log("completed successfully");
     return {
       statusCode: 200,
-      body: JSON.stringify({ url, fields }),
+      body: JSON.stringify({ url, fields, imageKey }),
       headers,
     };
   } catch (error: unknown) {

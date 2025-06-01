@@ -152,13 +152,13 @@ export class RgbSplittingStack extends cdk.Stack {
       this,
       `${props.variables.projectPrefix}-processed-images-table`,
       {
-        tableName: `${props.variables.projectPrefix}-processed-images-table`,
+        tableName: `${props.variables.projectPrefix}-processed-images-table-2`,
         partitionKey: {
-          name: "projectId",
+          name: "imageId",
           type: AttributeType.STRING,
         },
         sortKey: {
-          name: "imageId",
+          name: "projectId",
           type: AttributeType.STRING,
         },
         pointInTimeRecoverySpecification: {
@@ -170,6 +170,18 @@ export class RgbSplittingStack extends cdk.Stack {
             : cdk.RemovalPolicy.RETAIN,
       }
     );
+
+    processedImagesTable.addGlobalSecondaryIndex({
+      indexName: "projectIdIndex",
+      partitionKey: {
+        name: "projectId",
+        type: AttributeType.STRING,
+      },
+      sortKey: {
+        name: "imageId",
+        type: AttributeType.STRING,
+      },
+    });
 
     //this queue is used to store messages that failed to be downgraded
     const downgradeSubscriptionDLQ = new Queue(
@@ -934,6 +946,11 @@ export class RgbSplittingStack extends cdk.Stack {
     //route to request payments
     const triggerChargeRoute = v1Root.addResource("trigger-payment");
 
+    //route to get processed results -- USERS APPLICATION
+    const getProcessedImagesRoute = v1Root
+      .addResource("broken")
+      .addResource("{imageId}");
+
     //route for getting project info
     const projectInfoRoute = v1Root.addResource("{projectId}");
 
@@ -945,11 +962,6 @@ export class RgbSplittingStack extends cdk.Stack {
 
     //route to cancel a projects subscription
     const cancelSubscriptionRoute = projectInfoRoute.addResource("cancel");
-
-    //route to get processed results -- USERS APPLICATION
-    const getProcessedImagesRoute = projectInfoRoute
-      .addResource("broken")
-      .addResource("{imageId}");
 
     //route to get processed results -- WEB APPLICATION
     const getProcessedImagesWebRoute = projectInfoRoute

@@ -1,10 +1,8 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { APIGatewayProxyEventV2, Handler } from "aws-lambda";
-import { DynamoDBDocumentClient, GetCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
 
 import { z } from "zod";
-
-import { projectIdValidator } from "../helpers/schemaValidator/projectIdValidator";
 
 import { ProcessedImagesInfo } from "../types/processedResultInfo";
 
@@ -26,7 +24,6 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
 
   const { success, data, error } = z
     .object({
-      projectId: projectIdValidator,
       imageId: z.string().uuid(),
     })
     .safeParse(pathParameters);
@@ -40,31 +37,31 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     };
   }
 
-  const { imageId, projectId } = data;
+  const { imageId } = data;
 
   console.log("image Id", imageId);
-  console.log("project Id", projectId);
 
   try {
     const results = await dynamo.send(
-      new GetCommand({
+      new QueryCommand({
         TableName: processedResultsTable,
-        Key: {
-          imageId,
-          projectId,
+        KeyConditionExpression: "imageId = :imageId",
+        ExpressionAttributeValues: {
+          ":imageId": imageId,
         },
         ProjectionExpression: "createdAt, originalImageUrl, results",
+        Limit: 1,
       })
     );
 
-    if (!results.Item) {
+    if (!results.Items || !results.Items.length) {
       return {
         statusCode: 404,
         body: JSON.stringify({ message: "Image not found" }),
       };
     }
 
-    const processedResult = results.Item as Pick<
+    const processedResult = results.Items[0] as Pick<
       ProcessedImagesInfo,
       "createdAt" | "originalImageUrl" | "results"
     >;
