@@ -57,7 +57,7 @@ let paymentGatewaySecret: string | undefined;
 
 let paymentPlans: PaymentPlansResponse | undefined;
 
-export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
+export const handler = async (event: APIGatewayProxyEventV2) => {
   const headers = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "OPTIONS, POST, GET",
@@ -141,17 +141,9 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
       }
 
       //validate the usage plans received
-      const {
-        error,
-        success,
-        data: allUsagePlans,
-      } = usagePlanValidator.safeParse(
+      const allUsagePlans = usagePlanValidator.parse(
         JSON.parse(availableUsagePlans.SecretString)
       );
-
-      if (!success) {
-        throw new Error(error.message);
-      }
 
       //store the secrets so they can be reused
       usagePlans = allUsagePlans;
@@ -192,7 +184,7 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
     //if the plan is free, no need for payments, create the api, attach to the free usage plan & shikenah
     if (planName === PlanType.Free) {
       //checks if they already have too many free projects
-      const freeProjects = await dynamo.send(
+      const freeProjects = await dynamoClient.send(
         new QueryCommand({
           TableName: tableName,
           IndexName: "userIdSubStatusIndex",
