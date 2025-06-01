@@ -152,7 +152,7 @@ export class RgbSplittingStack extends cdk.Stack {
       this,
       `${props.variables.projectPrefix}-processed-images-table`,
       {
-        tableName: `${props.variables.projectPrefix}-processed-images-table-2`,
+        tableName: `${props.variables.projectPrefix}-processed-images-table`,
         partitionKey: {
           name: "imageId",
           type: AttributeType.STRING,
