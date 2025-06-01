@@ -15,40 +15,16 @@ import { UsagePlans } from "../schemaValidator/usagePlanValidator";
 export async function validatePlan({
   planName,
   usagePlans,
-  paymentGatewayUrl,
-  paymentGatewaySecret,
+  paymentPlans,
 }: {
   planName: string;
-  paymentGatewayUrl: string;
   usagePlans: UsagePlans;
-  paymentGatewaySecret: string;
+  paymentPlans: PaymentPlansResponse;
 }) {
   const trimmedPlanName = planName.toLowerCase().trim();
 
-  const url = `${paymentGatewayUrl}/payment-plans?status=active`;
-
-  const getAllPlansOnPaymentGatewayReq = await fetch(url, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${paymentGatewaySecret}`,
-      "Content-Type": "application/json",
-      accept: "application/json",
-    },
-  });
-
-  if (!getAllPlansOnPaymentGatewayReq.ok) {
-    const res = await getAllPlansOnPaymentGatewayReq.json();
-
-    throw new Error(
-      `failed to get plans from payment gateway: ${JSON.stringify(res)}`
-    );
-  }
-
-  const allPlansInPaymentGateway =
-    (await getAllPlansOnPaymentGatewayReq.json()) as PaymentPlansResponse;
-
   //find the plan with th name the customer selected
-  const planDetails = allPlansInPaymentGateway.data.find(
+  const planDetails = paymentPlans.data.find(
     (plan) => trimmedPlanName === plan.name.toLowerCase().trim()
   );
 

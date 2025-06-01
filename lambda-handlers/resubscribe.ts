@@ -1,4 +1,4 @@
-import { Handler, SQSEvent } from "aws-lambda";
+import { SQSEvent } from "aws-lambda";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
@@ -14,6 +14,7 @@ import {
   usagePlanValidator,
 } from "../helpers/schemaValidator/usagePlanValidator";
 
+import { PaymentPlansResponse } from "../types/paymentPlans";
 import { ExpiredProject } from "../types/expiredSubscriptionProjectInfo";
 
 const region = process.env.REGION!;
@@ -37,6 +38,7 @@ const secretClient = new SecretsManagerClient({
 
 let usagePlans: UsagePlans | undefined;
 let paymentGatewaySecret: string | undefined;
+let paymentPlans: PaymentPlansResponse | undefined;
 
 //this works like this, it is initially triggered by an eventbridge schedule every 7 days
 //on first invocation, it has no cursor, so we fetch from the beginning
@@ -157,6 +159,31 @@ export const handler = async (event?: SQSEvent) => {
       paymentGatewaySecret = paymentGatewaySecretReq.SecretString;
     }
 
+    if (!paymentPlans) {
+      const getAllPlansOnPaymentGatewayReq = await fetch(
+        `${paymentGatewayUrl}/payment-plans?status=active`,
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${paymentGatewaySecret}`,
+            "Content-Type": "application/json",
+            accept: "application/json",
+          },
+        }
+      );
+
+      if (!getAllPlansOnPaymentGatewayReq.ok) {
+        const res = await getAllPlansOnPaymentGatewayReq.json();
+
+        throw new Error(
+          `failed to get plans from payment gateway: ${JSON.stringify(res)}`
+        );
+      }
+
+      paymentPlans =
+        (await getAllPlansOnPaymentGatewayReq.json()) as PaymentPlansResponse;
+    }
+
     //we loop through each user & try to resubscribe them, max 2 attempts
     for (const project of projects) {
       let attempts = 0;
@@ -168,9 +195,8 @@ export const handler = async (event?: SQSEvent) => {
         try {
           const { planDetails, chosenUsagePlanId } = await validatePlan({
             usagePlans,
-            paymentGatewayUrl,
+            paymentPlans,
             planName: project.currentPlan,
-            paymentGatewaySecret: paymentGatewaySecret,
           });
 
           const chargeReq = await fetch(
@@ -288,6 +314,7 @@ export const handler = async (event?: SQSEvent) => {
     }
 
     console.log("completed successfully");
+
     return;
   } catch (error: unknown) {
     console.error("ERROR: FAILED TO HANDLE RESUBSCRIBTION PROCESS", error);

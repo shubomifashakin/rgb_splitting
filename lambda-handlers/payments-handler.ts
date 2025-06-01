@@ -33,6 +33,7 @@ import {
   UsagePlans,
   usagePlanValidator,
 } from "../helpers/schemaValidator/usagePlanValidator";
+import { PaymentPlansResponse } from "../types/paymentPlans";
 
 const region = process.env.REGION!;
 const tableName = process.env.TABLE_NAME!;
@@ -53,6 +54,8 @@ const secretClient = new SecretsManagerClient({
 
 let usagePlans: UsagePlans | undefined;
 let paymentGatewaySecret: string | undefined;
+
+let paymentPlans: PaymentPlansResponse | undefined;
 
 export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
   const headers = {
@@ -93,7 +96,6 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
 
     //if there is a projectId, check if the project actually exists
     if (projectId) {
-      //check if the project exists
       existingProject = await dynamoClient.send(
         new GetCommand({
           TableName: tableName,
@@ -156,11 +158,35 @@ export const handler: Handler = async (event: APIGatewayProxyEventV2) => {
       paymentGatewaySecret = paymentGatewaySecretReq.SecretString;
     }
 
+    if (!paymentPlans) {
+      const getAllPlansOnPaymentGatewayReq = await fetch(
+        `${paymentGatewayUrl}/payment-plans?status=active`,
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${paymentGatewaySecret}`,
+            "Content-Type": "application/json",
+            accept: "application/json",
+          },
+        }
+      );
+
+      if (!getAllPlansOnPaymentGatewayReq.ok) {
+        const res = await getAllPlansOnPaymentGatewayReq.json();
+
+        throw new Error(
+          `failed to get plans from payment gateway: ${JSON.stringify(res)}`
+        );
+      }
+
+      paymentPlans =
+        (await getAllPlansOnPaymentGatewayReq.json()) as PaymentPlansResponse;
+    }
+
     const { planDetails, chosenUsagePlanId } = await validatePlan({
       planName,
       usagePlans,
-      paymentGatewayUrl,
-      paymentGatewaySecret: paymentGatewaySecret,
+      paymentPlans,
     });
 
     //if the plan is free, no need for payments, create the api, attach to the free usage plan & shikenah
