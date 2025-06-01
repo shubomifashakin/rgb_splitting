@@ -132,6 +132,7 @@ describe("generate presigned url", () => {
           "x-amz-meta-project_id": mockProjectId,
           "x-amz-meta-channels": normalizedChannels,
         },
+        imageKey: mockUUid,
       }),
       headers: {
         "Access-Control-Allow-Origin": "*",

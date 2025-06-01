@@ -14,15 +14,17 @@ describe("get processed images handler", () => {
   });
 
   test("it should get the processed images", async () => {
-    const mockGetCommandCommand = jest.fn().mockResolvedValue({
-      Item: {
-        createdAt: "102920",
-        originalImageUrl: "https://example.com/image.jpg",
-        results: {
-          channels: ["red", "green", "blue"],
-          grain: ["horizontal", "vertical"],
+    const mockQueryCommand = jest.fn().mockResolvedValue({
+      Items: [
+        {
+          createdAt: "102920",
+          originalImageUrl: "https://example.com/image.jpg",
+          results: {
+            channels: ["red", "green", "blue"],
+            grain: ["horizontal", "vertical"],
+          },
         },
-      },
+      ],
     });
 
     jest.mock("@aws-sdk/lib-dynamodb", () => {
@@ -34,13 +36,12 @@ describe("get processed images handler", () => {
             }),
           })),
         },
-        GetCommand: mockGetCommandCommand,
+        QueryCommand: mockQueryCommand,
       };
     });
 
     const event = {
       pathParameters: {
-        projectId: fakeUUid,
         imageId: fakeUUid,
       },
     } as unknown as APIGatewayProxyEventV2;
@@ -54,17 +55,17 @@ describe("get processed images handler", () => {
       {} as unknown as Callback
     );
 
-    expect(mockGetCommandCommand).toHaveBeenCalledWith({
+    expect(mockQueryCommand).toHaveBeenCalledWith({
       TableName: process.env.PROCESSED_IMAGES_TABLE_NAME!,
-      Key: {
-        imageId: fakeUUid,
-        projectId: fakeUUid,
+      KeyConditionExpression: "imageId = :imageId",
+      ExpressionAttributeValues: {
+        ":imageId": fakeUUid,
       },
       ProjectionExpression: "createdAt, originalImageUrl, results",
+      Limit: 1,
     });
 
     expect(console.log).toHaveBeenCalledWith("image Id", fakeUUid);
-    expect(console.log).toHaveBeenCalledWith("project Id", fakeUUid);
 
     expect(result).toEqual({
       statusCode: 200,
@@ -102,7 +103,6 @@ describe("get processed images handler", () => {
   test("it should return a 400 error due to failed validation", async () => {
     const event = {
       pathParameters: {
-        projectId: fakeUUid,
         imageId: "invalid-image-id",
       },
     } as unknown as APIGatewayProxyEventV2;
@@ -127,16 +127,15 @@ describe("get processed images handler", () => {
     });
   });
 
-  test("it should return a 404 error due to image not found", async () => {
+  test("it should return a 404 error because the image was not found", async () => {
     const event = {
       pathParameters: {
         imageId: fakeUUid,
-        projectId: fakeUUid,
       },
     } as unknown as APIGatewayProxyEventV2;
 
-    const mockGetCommand = jest.fn().mockResolvedValue({
-      Item: undefined,
+    const mockQueryCommand = jest.fn().mockResolvedValue({
+      Items: [],
     });
 
     jest.mock("@aws-sdk/lib-dynamodb", () => {
@@ -148,7 +147,7 @@ describe("get processed images handler", () => {
             }),
           })),
         },
-        GetCommand: mockGetCommand,
+        QueryCommand: mockQueryCommand,
       };
     });
 
@@ -172,7 +171,6 @@ describe("get processed images handler", () => {
     const event = {
       pathParameters: {
         imageId: fakeUUid,
-        projectId: fakeUUid,
       },
     } as unknown as APIGatewayProxyEventV2;
 

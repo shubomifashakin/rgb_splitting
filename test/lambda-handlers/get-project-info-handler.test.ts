@@ -291,6 +291,7 @@ describe("get project info handler", () => {
 
     expect(mockQueryCommand).toHaveBeenCalledWith({
       TableName: "fake-processed",
+      IndexName: "projectIdIndex",
       KeyConditionExpression: "projectId = :projectId",
       ExpressionAttributeValues: {
         ":userId": fakeUserId,
@@ -383,6 +384,7 @@ describe("get project info handler", () => {
 
     expect(mockQueryCommand).toHaveBeenCalledWith({
       TableName: "fake-processed",
+      IndexName: "projectIdIndex",
       KeyConditionExpression: "projectId = :projectId",
       ExpressionAttributeValues: {
         ":userId": fakeUserId,
@@ -649,6 +651,7 @@ describe("get project info handler", () => {
 
     expect(mockQueryCommand).toHaveBeenCalledWith({
       TableName: "fake-processed",
+      IndexName: "projectIdIndex",
       KeyConditionExpression: "projectId = :projectId",
       ExpressionAttributeValues: {
         ":userId": fakeUserId,
