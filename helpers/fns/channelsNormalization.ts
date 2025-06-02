@@ -35,5 +35,7 @@ export function normalizeChannel(input: string | string[]) {
     return foundNormalization;
   };
 
-  return Array.isArray(input) ? input.map(process) : [process(input)];
+  return Array.isArray(input)
+    ? input.map(process)
+    : [process(input), process(input), process(input)];
 }

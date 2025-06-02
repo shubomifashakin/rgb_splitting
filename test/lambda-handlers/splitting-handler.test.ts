@@ -50,14 +50,6 @@ const moreGrainsButSameImagePresent = "more-grains-but-same-image-present";
 const moreChannelsBucketName = "more-channels";
 const moreChannelsButSameImagePresent = "more-channels-but-same-image-present";
 
-const oneGrainMoreChannelsBucketName = "one-grain-more-channels";
-const oneGrainMoreChannelsButSameImagePresent =
-  "one-grain-more-channels-but-same-image-present";
-
-const oneChannelMoreGrainsBucketName = "one-channel-more-grains";
-const oneChannelMoreGrainsButSameImagePresent =
-  "one-channel-more-grains-but-same-image-present";
-
 const mockGetS3ObjectCommand = jest.fn().mockImplementation((command) => {
   let grainValue, channelsValue;
 
@@ -78,7 +70,7 @@ const mockGetS3ObjectCommand = jest.fn().mockImplementation((command) => {
     ]);
   }
 
-  //channels > grains but grains > 2
+  //channels > grains
   if (command.Bucket === moreChannelsBucketName) {
     grainValue = JSON.stringify([100, 200]);
 
@@ -89,7 +81,7 @@ const mockGetS3ObjectCommand = jest.fn().mockImplementation((command) => {
     ]);
   }
 
-  //channels > grains but grains > 2 & there is a process that results in the same image
+  //channels > grains & there is a process that results in the same image
   if (command.Bucket === moreChannelsButSameImagePresent) {
     grainValue = JSON.stringify([100, 0]);
 
@@ -100,7 +92,7 @@ const mockGetS3ObjectCommand = jest.fn().mockImplementation((command) => {
     ]);
   }
 
-  //grains > channels but channels > 2
+  //grains > channels
   if (command.Bucket === moreGrainsBucketName) {
     grainValue = JSON.stringify([100, 200, 400]);
 
@@ -110,43 +102,9 @@ const mockGetS3ObjectCommand = jest.fn().mockImplementation((command) => {
     ]);
   }
 
-  //grains > channels but channels > 2 & there is a process that results in the same image
+  //grains > channels & there is a process that results in the same image
   if (command.Bucket === moreGrainsButSameImagePresent) {
     grainValue = JSON.stringify([100, 0, 400]);
-
-    channelsValue = JSON.stringify([
-      NormalizedChannels.REDGREEN,
-      NormalizedChannels.REDGREENBLUE,
-    ]);
-  }
-
-  //1 channel and grains > channels
-  if (command.Bucket === oneChannelMoreGrainsBucketName) {
-    grainValue = JSON.stringify([100, 200]);
-
-    channelsValue = JSON.stringify([NormalizedChannels.BLUE]);
-  }
-
-  //1 channel and grains > channels & there is a process that results in the same image
-  if (command.Bucket === oneChannelMoreGrainsButSameImagePresent) {
-    grainValue = JSON.stringify([0, 200]);
-
-    channelsValue = JSON.stringify([NormalizedChannels.REDGREENBLUE]);
-  }
-
-  //1 grain and channels > grain
-  if (command.Bucket === oneGrainMoreChannelsBucketName) {
-    grainValue = JSON.stringify([100]);
-
-    channelsValue = JSON.stringify([
-      NormalizedChannels.REDGREEN,
-      NormalizedChannels.GREENBLUE,
-    ]);
-  }
-
-  //1 grain and channels > grain & there is a process that results in the same image
-  if (command.Bucket === oneGrainMoreChannelsButSameImagePresent) {
-    grainValue = JSON.stringify([0]);
 
     channelsValue = JSON.stringify([
       NormalizedChannels.REDGREEN,
@@ -732,295 +690,6 @@ describe("splitting handler", () => {
               NormalizedChannels.REDGREEN
             }-${100}.jpg`,
             grain: 100,
-            channels: NormalizedChannels.REDGREEN,
-          },
-        ],
-        imageId: mockImageKey,
-        projectId: fakeProjectId,
-        originalImageUrl: `https://${mockBucketName}.s3.${process.env.REGION}.amazonaws.com/${mockImageKey}`,
-        createdAt: expect.any(Number),
-      },
-    });
-  });
-
-  test("it should split the image -- one channel more grains", async () => {
-    executeMocks();
-
-    const { handler } = await import("../../lambda-handlers/splitting-handler");
-
-    const mockImageKey = "mock-key";
-    const mockBucketName = oneChannelMoreGrainsBucketName;
-
-    const mockEvent = {
-      Records: [
-        {
-          s3: {
-            bucket: {
-              name: mockBucketName,
-            },
-            object: {
-              key: mockImageKey,
-            },
-          },
-        },
-      ],
-    };
-
-    await handler(mockEvent as unknown as S3Event);
-
-    getShouldSplitExpectations({
-      mockImageKey,
-      mockBucketName,
-      toBufferTimes: 2,
-      clearRectTimes: 2,
-      putImageDataTimes: 2,
-    });
-
-    expect(mockPutS3ObjectCommand).toHaveBeenCalledTimes(2);
-    expect(mockPutS3ObjectCommand).toHaveBeenCalledWith({
-      Body: expect.any(Buffer),
-      ContentType: "image/jpeg",
-      Bucket: mockBucketName,
-      Key: `${mockImageKey}/${NormalizedChannels.BLUE}-${100}.jpg`,
-    });
-
-    expect(mockPutS3ObjectCommand).toHaveBeenCalledWith({
-      Body: expect.any(Buffer),
-      ContentType: "image/jpeg",
-      Bucket: mockBucketName,
-      Key: `${mockImageKey}/${NormalizedChannels.BLUE}-${200}.jpg`,
-    });
-
-    expect(mockPutCommand).toHaveBeenCalledWith({
-      TableName: process.env.RESULTS_TABLE_NAME,
-      Item: {
-        userId: fakeUserId,
-        results: [
-          {
-            url: `https://${mockBucketName}.s3.${
-              process.env.REGION
-            }.amazonaws.com/${mockImageKey}/${
-              NormalizedChannels.BLUE
-            }-${100}.jpg`,
-            grain: 100,
-            channels: NormalizedChannels.BLUE,
-          },
-          {
-            url: `https://${mockBucketName}.s3.${
-              process.env.REGION
-            }.amazonaws.com/${mockImageKey}/${
-              NormalizedChannels.BLUE
-            }-${200}.jpg`,
-            grain: 200,
-            channels: NormalizedChannels.BLUE,
-          },
-        ],
-        imageId: mockImageKey,
-        projectId: fakeProjectId,
-        originalImageUrl: `https://${mockBucketName}.s3.${process.env.REGION}.amazonaws.com/${mockImageKey}`,
-        createdAt: expect.any(Number),
-      },
-    });
-  });
-
-  test("it should split the image -- one channel more grains -- same image present", async () => {
-    executeMocks();
-
-    const { handler } = await import("../../lambda-handlers/splitting-handler");
-
-    const mockImageKey = "mock-key";
-    const mockBucketName = oneChannelMoreGrainsButSameImagePresent;
-
-    const mockEvent = {
-      Records: [
-        {
-          s3: {
-            bucket: {
-              name: mockBucketName,
-            },
-            object: {
-              key: mockImageKey,
-            },
-          },
-        },
-      ],
-    };
-
-    await handler(mockEvent as unknown as S3Event);
-
-    getShouldSplitExpectations({
-      mockImageKey,
-      mockBucketName,
-      toBufferTimes: 1,
-      clearRectTimes: 1,
-      putImageDataTimes: 1,
-    });
-
-    expect(mockPutS3ObjectCommand).toHaveBeenCalledTimes(1);
-
-    expect(mockPutS3ObjectCommand).toHaveBeenCalledWith({
-      Body: expect.any(Buffer),
-      ContentType: "image/jpeg",
-      Bucket: mockBucketName,
-      Key: `${mockImageKey}/${NormalizedChannels.REDGREENBLUE}-${200}.jpg`,
-    });
-
-    expect(mockPutCommand).toHaveBeenCalledWith({
-      TableName: process.env.RESULTS_TABLE_NAME,
-      Item: {
-        userId: fakeUserId,
-        results: [
-          {
-            url: `https://${mockBucketName}.s3.${
-              process.env.REGION
-            }.amazonaws.com/${mockImageKey}/${
-              NormalizedChannels.REDGREENBLUE
-            }-${200}.jpg`,
-            grain: 200,
-            channels: NormalizedChannels.REDGREENBLUE,
-          },
-        ],
-        imageId: mockImageKey,
-        projectId: fakeProjectId,
-        originalImageUrl: `https://${mockBucketName}.s3.${process.env.REGION}.amazonaws.com/${mockImageKey}`,
-        createdAt: expect.any(Number),
-      },
-    });
-  });
-
-  test("it should split the image -- one grain more channels", async () => {
-    executeMocks();
-
-    const { handler } = await import("../../lambda-handlers/splitting-handler");
-
-    const mockImageKey = "mock-key";
-    const mockBucketName = oneGrainMoreChannelsBucketName;
-
-    const mockEvent = {
-      Records: [
-        {
-          s3: {
-            bucket: {
-              name: mockBucketName,
-            },
-            object: {
-              key: mockImageKey,
-            },
-          },
-        },
-      ],
-    };
-
-    await handler(mockEvent as unknown as S3Event);
-
-    getShouldSplitExpectations({
-      mockImageKey,
-      mockBucketName,
-      toBufferTimes: 2,
-      clearRectTimes: 2,
-      putImageDataTimes: 2,
-    });
-
-    expect(mockPutS3ObjectCommand).toHaveBeenCalledTimes(2);
-    expect(mockPutS3ObjectCommand).toHaveBeenCalledWith({
-      Body: expect.any(Buffer),
-      ContentType: "image/jpeg",
-      Bucket: mockBucketName,
-      Key: `${mockImageKey}/${NormalizedChannels.REDGREEN}-${100}.jpg`,
-    });
-
-    expect(mockPutS3ObjectCommand).toHaveBeenCalledWith({
-      Body: expect.any(Buffer),
-      ContentType: "image/jpeg",
-      Bucket: mockBucketName,
-      Key: `${mockImageKey}/${NormalizedChannels.GREENBLUE}-${100}.jpg`,
-    });
-
-    expect(mockPutCommand).toHaveBeenCalledWith({
-      TableName: process.env.RESULTS_TABLE_NAME,
-      Item: {
-        userId: fakeUserId,
-        results: [
-          {
-            url: `https://${mockBucketName}.s3.${
-              process.env.REGION
-            }.amazonaws.com/${mockImageKey}/${
-              NormalizedChannels.REDGREEN
-            }-${100}.jpg`,
-            grain: 100,
-            channels: NormalizedChannels.REDGREEN,
-          },
-          {
-            url: `https://${mockBucketName}.s3.${
-              process.env.REGION
-            }.amazonaws.com/${mockImageKey}/${
-              NormalizedChannels.GREENBLUE
-            }-${100}.jpg`,
-            grain: 100,
-            channels: NormalizedChannels.GREENBLUE,
-          },
-        ],
-        imageId: mockImageKey,
-        projectId: fakeProjectId,
-        originalImageUrl: `https://${mockBucketName}.s3.${process.env.REGION}.amazonaws.com/${mockImageKey}`,
-        createdAt: expect.any(Number),
-      },
-    });
-  });
-
-  test("it should split the image -- one grain more channels -- but same image present", async () => {
-    executeMocks();
-
-    const { handler } = await import("../../lambda-handlers/splitting-handler");
-
-    const mockImageKey = "mock-key";
-    const mockBucketName = oneGrainMoreChannelsButSameImagePresent;
-
-    const mockEvent = {
-      Records: [
-        {
-          s3: {
-            bucket: {
-              name: mockBucketName,
-            },
-            object: {
-              key: mockImageKey,
-            },
-          },
-        },
-      ],
-    };
-
-    await handler(mockEvent as unknown as S3Event);
-
-    getShouldSplitExpectations({
-      mockImageKey,
-      mockBucketName,
-      toBufferTimes: 1,
-      clearRectTimes: 1,
-      putImageDataTimes: 1,
-    });
-
-    expect(mockPutS3ObjectCommand).toHaveBeenCalledTimes(1);
-    expect(mockPutS3ObjectCommand).toHaveBeenCalledWith({
-      Body: expect.any(Buffer),
-      ContentType: "image/jpeg",
-      Bucket: mockBucketName,
-      Key: `${mockImageKey}/${NormalizedChannels.REDGREEN}-${0}.jpg`,
-    });
-
-    expect(mockPutCommand).toHaveBeenCalledWith({
-      TableName: process.env.RESULTS_TABLE_NAME,
-      Item: {
-        userId: fakeUserId,
-        results: [
-          {
-            url: `https://${mockBucketName}.s3.${
-              process.env.REGION
-            }.amazonaws.com/${mockImageKey}/${
-              NormalizedChannels.REDGREEN
-            }-${0}.jpg`,
-            grain: 0,
             channels: NormalizedChannels.REDGREEN,
           },
         ],

@@ -93,9 +93,9 @@ export async function processImage({
     );
   }
 
-  //if they sent more channels than grains & there are at least 2 grains
-  //use a grain value of 0 for the channel without a corresponding grain
-  if (channels.length > grains.length && grains.length >= 2) {
+  //if they sent more channels than grains
+  //use a grain value of 0 for the channels without a corresponding grain
+  if (channels.length > grains.length) {
     processedImages = await Promise.all(
       channels
         .map((channel, index) => {
@@ -131,9 +131,9 @@ export async function processImage({
     );
   }
 
-  //if they sent more grains than channels & there are at least 2 channels
+  //if they sent more grains than channels
   //skip all grains that do not have a corresponding channel
-  if (grains.length > channels.length && channels.length >= 2) {
+  if (grains.length > channels.length) {
     processedImages = await Promise.all(
       grains
         .map((grain, index) => {
@@ -168,80 +168,6 @@ export async function processImage({
           return channelFns[channel]({
             grain,
             imageData,
-          });
-        })
-        .filter((image) => image !== undefined)
-    );
-  }
-
-  //if they sent just 1 channel & they sent more grains than channels, use that channel for all the grains
-  if (channels.length === 1 && grains.length > channels.length) {
-    processedImages = await Promise.all(
-      grains
-        .map((grain) => {
-          const channel = channels[0];
-
-          //skip any process that result in the same image uploaded
-          if (isTheSameImage({ channel, grain })) {
-            return;
-          }
-
-          const { url, key } = formImageKeyAndUrl({
-            grain,
-            region,
-            format,
-            channel,
-            bucketName,
-            originalImageKey,
-          });
-
-          processedInfo.push({
-            url,
-            key,
-            grain,
-            channel,
-          });
-
-          return channelFns[channel]({
-            grain,
-            imageData,
-          });
-        })
-        .filter((image) => image !== undefined)
-    );
-  }
-
-  //if they sent just 1 grain & they sent more channels, use that grain for all the channels
-  if (grains.length === 1 && channels.length > grains.length) {
-    processedImages = await Promise.all(
-      channels
-        .map((channel) => {
-          const grain = grains[0];
-
-          //skip any process that results in the same image uploaded
-          if (isTheSameImage({ channel, grain })) {
-            return;
-          }
-
-          const { url, key } = formImageKeyAndUrl({
-            grain,
-            region,
-            format,
-            channel,
-            bucketName,
-            originalImageKey,
-          });
-
-          processedInfo.push({
-            url,
-            key,
-            grain,
-            channel,
-          });
-
-          return channelFns[channel]({
-            imageData,
-            grain,
           });
         })
         .filter((image) => image !== undefined)
