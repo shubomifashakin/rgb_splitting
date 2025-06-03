@@ -93,7 +93,9 @@ export class RgbSplittingStack extends cdk.Stack {
           type: AttributeType.STRING,
         },
         pointInTimeRecoverySpecification: {
-          pointInTimeRecoveryEnabled: true,
+          pointInTimeRecoveryEnabled: props.variables.stage === "prod",
+          recoveryPeriodInDays:
+            props.variables.stage === "prod" ? 15 : undefined,
         },
         removalPolicy:
           props.variables.stage === "dev"
@@ -162,7 +164,9 @@ export class RgbSplittingStack extends cdk.Stack {
           type: AttributeType.STRING,
         },
         pointInTimeRecoverySpecification: {
-          pointInTimeRecoveryEnabled: true,
+          pointInTimeRecoveryEnabled: props.variables.stage === "prod",
+          recoveryPeriodInDays:
+            props.variables.stage === "prod" ? 15 : undefined,
         },
         removalPolicy:
           props.variables.stage === "dev"
