@@ -21,3 +21,9 @@ The following AWS services are used in this project:
 - AWS EventBridge
 - AWS Api Gateway
 - AWS SecretsManager
+
+## Detailed Notice:
+
+This project is no longer actively maintained. It was a personal project that served its purpose well, but I have since moved on to other projects. It's only here for references.
+
+[![No Maintenance Intended](https://img.shields.io/badge/No%20Maintenance%20Intended-true-red)](https://img.shields.io/badge/No%20Maintenance%20Intended-true-red)
